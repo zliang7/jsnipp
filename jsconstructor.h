@@ -26,66 +26,104 @@
 #pragma once
 
 #include <cassert>
-#include <cxxabi.h>
 #include <functional>
-#include <typeinfo>
 
 #include <jsni.h>
 
 #include "jsfunction.h"
-#include "jsobject.h"
 
 namespace jsnipp {
 
-template <class C>
-using JSFactoryFunctionType = C* (*)(JSObject, JSArray);
-
-template <class C, JSFactoryFunctionType<C> factory = nullptr>
+template <class T>
 class JSNativeConstructor : public JSFunction {
 public:
-    JSNativeConstructor(std::function<void(JSObject)> setup = nullptr):
-        JSFunction([](JSNIEnv* env, const CallbackInfo info){
-            assert(env == env_);
-            JSObject self = env->GetThis(info);
-#if __cpp_exceptions || __EXCEPTIONS
-            try {
-#endif
-                C* native = (factory != nullptr)?
-                        (*factory)(self, info) : new C(self, info);
-                if (native)
-                    env->SetReturnValue(info, adopt(native));
-#if __cpp_exceptions || __EXCEPTIONS
-            } catch (JSValue result) {
-                env->SetReturnValue(info, result);
-            }
-#endif
-        }) {
-        // set function name
-        char *name = abi::__cxa_demangle(typeid(C).name(), NULL, NULL, NULL);
-        setName(name);
-        free(name);
+    JSNativeConstructor(std::function<std::string(JSObject)> setup);
+    JSNativeConstructor(JSPropertyList list);
 
-        JSNativeObject<C> cls(nullptr, false, setup);
-        class_ = env_->NewGlobalValue(cls);
-    }
-
-    JSNativeConstructor(JSPropertyList list):
-        JSNativeConstructor(std::bind([](JSPropertyList list, JSObject cls){
-            for (auto& p: list)  cls.setProperty(p.first, p.second);
-        }, list, std::placeholders::_1)) {}
-
-    static JSNativeObject<C> adopt(C* native, bool unmanaged = false) {
+    static JSNativeObject<T> adopt(T* native) {
         assert(class_);
-        JSNativeObject<C> result(env_->GetGlobalValue(class_));
-        result.reset(native, unmanaged);
+        JSNativeObject<T> result(env_->GetGlobalValue(class_));
+        result.reset(native);
         return result;
     }
 
 private:
+    static void thunk(JSNIEnv* env, const CallbackInfo info);
     static JsGlobalValue class_;
 };
 
-template <class C, JSFactoryFunctionType<C> factory>
-JsGlobalValue JSNativeConstructor<C, factory>::class_ = nullptr;
+}
+
+
+//////////////////////////////////////////////////////////////////////////////
+
+#if __cpp_rtti || __GXX_RTTI
+#include <cxxabi.h>
+#include <typeinfo>
+#endif
+
+namespace jsnipp {
+
+namespace {
+
+inline std::string setup_list(JSObject cls, JSPropertyList list) {
+    std::string name;
+    for (auto& p: list) {
+        if (p.first != "name")
+            cls.setProperty(p.first, p.second);
+        else
+            name = JSString(p.second);
+    }
+    return name;
+}
+
+}
+
+
+template <class T>
+JsGlobalValue JSNativeConstructor<T>::class_ = nullptr;
+
+template <class T>
+JSNativeConstructor<T>::JSNativeConstructor(
+        std::function<std::string(JSObject)> setup):
+    JSFunction(thunk) {
+    JSNativeObject<T> cls(nullptr);
+    std::string name;
+    if (setup)
+        name = setup(cls);
+#if __cpp_rtti || __GXX_RTTI
+    if (name.empty()) {
+        size_t len;
+        char *cname = abi::__cxa_demangle(typeid(T).name(), NULL, &len, NULL);
+        name.append(cname, len);
+        free(cname);
+    }
+#endif
+    if (!name.empty())
+        setName(name);
+    class_ = env_->NewGlobalValue(cls);
+}
+
+template <class T>
+JSNativeConstructor<T>::JSNativeConstructor(JSPropertyList list):
+    JSNativeConstructor<T>(
+            std::bind(setup_list, std::placeholders::_1, list)) {}
+
+template <class T>
+void JSNativeConstructor<T>::thunk(JSNIEnv* env, const CallbackInfo info) {
+    assert(env == env_);
+    JSObject self = env->GetThis(info);
+#if __cpp_exceptions || __EXCEPTIONS
+    try {
+#endif
+        T* native = new T(self, info);
+        if (native)
+            env->SetReturnValue(info, adopt(native));
+#if __cpp_exceptions || __EXCEPTIONS
+    } catch (JSValue result) {
+        env->SetReturnValue(info, result);
+    }
+#endif
+}
 
 }

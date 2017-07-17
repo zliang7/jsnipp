@@ -78,71 +78,54 @@ using JSFunctionType = JSValue (*)(JSObject, JSArray);
 template<JSFunctionType function>
 class JSNativeFunction: public JSFunction {
 public:
-    JSNativeFunction():
-        JSFunction([](JSNIEnv* env, const CallbackInfo info){
-            assert(env == env_);
-            JSObject self = env->GetThis(info);
-            JsValue result = (*function)(self, info);
-            env->SetReturnValue(info, result);
-        }){}
+    JSNativeFunction(): JSFunction(thunk){}
+
+    JSNativeFunction(const std::string& name): JSNativeFunction() {
+        if (!name.empty())  setName(name);
+    }
+
+private:
+    static void thunk(JSNIEnv* env, const CallbackInfo info);
 };
 
-template <class C>
-using JSMethodType = JSValue (C::*)(JSObject, JSArray);
+template <class T>
+using JSMethodType = JSValue (T::*)(JSObject, JSArray);
 
-template <class C, JSMethodType<C> method>
+template <class T, JSMethodType<T> method>
 class JSNativeMethod : public JSFunction {
 public:
-    JSNativeMethod() :
-        JSFunction([](JSNIEnv* env, const CallbackInfo info){
-            assert(env == env_);
-            JSNativeObject<C> self(env->GetThis(info));
-            C* native = self.native();
-            if (native) {
-                JsValue result = (native->*method)(self, info);
-                env->SetReturnValue(info, result);
-            } else {
-                //TODO: throw an exception
-            }
-        }){}
+    JSNativeMethod(): JSFunction(thunk){}
+
+    JSNativeMethod(const std::string& name): JSNativeMethod() {
+        if (!name.empty())  setName(name);
+    }
+
+private:
+    static void thunk(JSNIEnv* env, const CallbackInfo info);
 };
 
-template <class C>
-using JSGetterType = JSValue (C::*)(JSObject);
+template <class T>
+using JSGetterType = JSValue (T::*)(JSObject);
 
-template <class C, JSGetterType<C> getter>
+template <class T, JSGetterType<T> getter>
 class JSNativeGetter : public JSFunction {
 public:
-    JSNativeGetter() :
-        JSFunction([](JSNIEnv* env, const CallbackInfo info){
-            assert(env == env_);
-            JSNativeObject<C> self(env->GetThis(info));
-            C* native = self.native();
-            if (native) {
-                env->SetReturnValue(info, (native->*getter)(self));
-            } else {
-                //TODO: throw an exception
-            }
-        }){}
+    JSNativeGetter(): JSFunction(thunk){}
+
+private:
+    static void thunk(JSNIEnv* env, const CallbackInfo info);
 };
 
-template <class C>
-using JSSetterType = void (C::*)(JSObject, JSValue);
+template <class T>
+using JSSetterType = void (T::*)(JSObject, JSValue);
 
-template <class C, JSSetterType<C> setter>
+template <class T, JSSetterType<T> setter>
 class JSNativeSetter : public JSFunction {
 public:
-    JSNativeSetter() :
-        JSFunction([](JSNIEnv* env, const CallbackInfo info){
-            assert(env == env_);
-            JSNativeObject<C> self(env->GetThis(info));
-            C* native = self.native();
-            if (native) {
-                (native->*setter)(self, env->GetArg(info, 0));
-            } else {
-                //TODO: throw an exception
-            }
-        }){}
+    JSNativeSetter(): JSFunction(thunk) {}
+
+private:
+    static void thunk(JSNIEnv* env, const CallbackInfo info);
 };
 
 // FYI: http://stackoverflow.com/questions/15148749/pointer-to-class-member-as-a-template-parameter
@@ -169,6 +152,52 @@ inline JSValue JSFunction::apply(JSObject self, JSArray args) const {
 
 inline void JSFunction::setName(const std::string& name) {
     defineProperty("name", JSPropertyData(JSString(name), false, true));
+}
+
+
+template <JSFunctionType function>
+void JSNativeFunction<function>::thunk(JSNIEnv* env, const CallbackInfo info) {
+    assert(env == env_);
+    JSObject self = env->GetThis(info);
+    JsValue result = (*function)(self, info);
+    env->SetReturnValue(info, result);
+}
+
+template <class T, JSMethodType<T> method>
+void JSNativeMethod<T, method>::thunk(JSNIEnv* env, const CallbackInfo info) {
+    assert(env == env_);
+    JSNativeObject<T> self(env->GetThis(info));
+    T* native = self.native();
+    if (native) {
+        JsValue result = (native->*method)(self, info);
+        env->SetReturnValue(info, result);
+    } else {
+        //TODO: throw an exception
+    }
+}
+
+template <class T, JSGetterType<T> getter>
+void JSNativeGetter<T, getter>::thunk(JSNIEnv* env, const CallbackInfo info) {
+    assert(env == env_);
+    JSNativeObject<T> self(env->GetThis(info));
+    T* native = self.native();
+    if (native) {
+        env->SetReturnValue(info, (native->*getter)(self));
+    } else {
+        //TODO: throw an exception
+    }
+}
+
+template <class T, JSSetterType<T> setter>
+void JSNativeSetter<T, setter>::thunk(JSNIEnv* env, const CallbackInfo info) {
+    assert(env == env_);
+    JSNativeObject<T> self(env->GetThis(info));
+    T* native = self.native();
+    if (native) {
+        (native->*setter)(self, env->GetArg(info, 0));
+    } else {
+        //TODO: throw an exception
+    }
 }
 
 }

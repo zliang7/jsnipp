@@ -27,7 +27,6 @@
 
 #include <cassert>
 #include <functional>
-#include <map>
 #include <string>
 
 #include <jsni.h>
@@ -114,47 +113,45 @@ protected:
 };
 
 
-template<class C>
+template<class T>
 class JSNativeObject : public JSObject {
 public:
-    JSNativeObject(C* native, bool unmanaged, std::function<void(JSObject)> setup):
-        JSObject(native_slot + 1) {
-        reset(native, unmanaged);
-        if (setup)  setup(*this);
+    typedef void (*Deleter)(T*);
+    JSNativeObject(T* native, unsigned int count = 0,
+                   Deleter deleter = JSNativeObject<T>::defaultDeleter);
+    JSNativeObject(std::nullptr_t): JSNativeObject(nullptr, 0) {}
+
+    JSNativeObject(T* native, std::function<void(T&, JSObject)> setup):
+        JSNativeObject(native) {
+        setup(*this, jsval_);
     }
 
-    JSNativeObject(C* native, bool unmanaged = false,
-                   std::function<void(C&, JSObject)> setup = nullptr):
-        JSNativeObject(native, unmanaged, std::bind(setup, std::ref(*native), std::placeholders::_1)){}
-
-    JSNativeObject(C* native, JSPropertyList list):
-        JSNativeObject(native, true, std::bind([](JSPropertyList list, JSObject obj){
-            for (auto& p: list)
-                obj.setProperty(p.first, p.second);
-        }, list, std::placeholders::_1)){}
-
-    JSNativeObject(JsValue jsval): JSObject(jsval) {
-        // TODO: type check with hash code of type_info
-        assert(is_object() && env_->HiddenFieldCount(jsval_) > native_slot);
+    JSNativeObject(T* native, JSPropertyList list):
+        JSNativeObject(native) {
+        for (auto& p: list)
+            setProperty(p.first, p.second);
     }
 
-    C* operator ->() const {
-        return native();
+    JSNativeObject(JsValue jsval);
+
+    T* native() const {
+        int index = env_->HiddenFieldCount(jsval_) - 1;
+        return reinterpret_cast<T*>(getPrivate(index));
     }
-    C* native() const;
-    void reset(C* native, bool unmanaged = false);
+    void reset(T* native);
 
 protected:
     void* getPrivate(int index) const {
-        assert(index < env_->HiddenFieldCount(jsval_) && index >= 0);
+        assert(index < env_->HiddenFieldCount(jsval_) - 3 && index >= 0);
         return env_->GetHiddenField(jsval_, index);
     }
     void setPrivate(int index, void* ptr) {
-        assert(index < env_->HiddenFieldCount(jsval_) && index >= 0);
+        assert(index < env_->HiddenFieldCount(jsval_) - 3 && index >= 0);
         return env_->SetHiddenField(jsval_, index, ptr);
     }
-
-    constexpr static int native_slot = 0;
+    static void defaultDeleter(T* obj) {
+        delete obj;
+    }
 };
 
 }
@@ -172,32 +169,45 @@ inline void JSObject::defineProperty(const std::string& name,
 }
 
 
-template<class C>
-inline C* JSNativeObject<C>::native() const {
-    // The LSB of the pointer is the flag of management.
-    uintptr_t ptr = reinterpret_cast<uintptr_t>(getPrivate(native_slot));
-    return reinterpret_cast<C*>(ptr & ~1);
+template<class T>
+JSNativeObject<T>::JSNativeObject(T* native, unsigned int count,
+                                  Deleter deleter):
+    JSObject(count + 3) {
+    setPrivate(count + 2, native);
+#if (__cpp_rtti || defined(__GXX_RTTI)) && !defined(NDEBUG)
+    auto hash = static_cast<uintptr_t>(typeid(T).hash_code());
+    setPrivate(count, reinterpret_cast<void*>(hash));
+#endif
+
+    if (deleter == nullptr)  return;
+    setPrivate(count + 1, reinterpret_cast<void*>(deleter));
+    env_->SetGCCallback(jsval_, jsval_, [](JSNIEnv*, void* data){
+        JSNativeObject<T> self(reinterpret_cast<JsValue>(data));
+        self.reset(nullptr);
+    });
 }
 
-template<class C>
-inline void JSNativeObject<C>::reset(C* native, bool unmanaged) {
-    C* ptr = this->native();
-    if (ptr != native && ptr == getPrivate(native_slot)) {
-        // release the old managed object
-        delete ptr;
-    }
+template<class T>
+JSNativeObject<T>::JSNativeObject(JsValue jsval): JSObject(jsval) {
+    assert(is_object());
+    int index = env_->HiddenFieldCount(jsval_) - 3;
+    assert(index >= 0);
+#if (__cpp_rtti || defined(__GXX_RTTI)) && !defined(NDEBUG)
+    auto hash = reinterpret_cast<uintptr_t>(getPrivate(index));
+    assert(typeid(T).hash_code() == static_cast<size_t>(hash));
+#endif
+}
 
-    if ((ptr = native) != nullptr) {
-        if (unmanaged) {
-            ptr = reinterpret_cast<C*>(reinterpret_cast<uintptr_t>(ptr) | 1);
-        } else {
-            env_->SetGCCallback(jsval_, jsval_, [](JSNIEnv*, void* data){
-                JSNativeObject<C> jsobj(reinterpret_cast<JsValue>(data));
-                jsobj.reset(nullptr);
-            });
-        }
-    }
-    setPrivate(native_slot, ptr);
+template<class T>
+void JSNativeObject<T>::reset(T* native) {
+    T* old = this->native();
+    if (native == old)  return;
+    int index = env_->HiddenFieldCount(jsval_) - 1;
+    setPrivate(index, native);
+
+    auto deleter = reinterpret_cast<Deleter>(getPrivate(index - 1));
+    if (deleter != nullptr)
+        deleter(old);
 }
 
 }

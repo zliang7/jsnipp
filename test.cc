@@ -35,9 +35,10 @@ public:
         return JSString(prefix_);
     }
     // initializer
-    static void setup(JSObject cls) {
+    static std::string setup(JSObject cls) {
         cls.setProperty("echo", JSNativeMethod<Echo, &Echo::echo>());
         cls.defineProperty("prefix", JSPropertyAccessor(JSNativeGetter<Echo, &Echo::prefix>()));
+        return "Echo";
     }
 private:
     std::string prefix_;
