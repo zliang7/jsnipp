@@ -91,5 +91,6 @@ int JSNI_Init(JSNIEnv* env, JsValue exports) {
     JSException<Error>("asdf");
     JSException<TypeError>::checkAndClear();
 */
+    jsobj.setProperty("typed", JSTypedArray<uint8_t, true>());
     return JSNI_VERSION_1_1;
 }

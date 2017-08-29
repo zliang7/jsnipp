@@ -28,6 +28,7 @@
 #include "jsprimitive.h"
 #include "jsobject.h"
 #include "jsarray.h"
+#include "jstypedarray.h"
 #include "jsfunction.h"
 #include "jscallback.h"
 #include "jsconstructor.h"
