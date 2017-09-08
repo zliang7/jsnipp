@@ -142,11 +142,11 @@ public:
 
 protected:
     void* getPrivate(int index) const {
-        assert(index < env_->HiddenFieldCount(jsval_) - 3 && index >= 0);
+        assert(index < env_->HiddenFieldCount(jsval_) && index >= 0);
         return env_->GetHiddenField(jsval_, index);
     }
     void setPrivate(int index, void* ptr) {
-        assert(index < env_->HiddenFieldCount(jsval_) - 3 && index >= 0);
+        assert(index < env_->HiddenFieldCount(jsval_) && index >= 0);
         return env_->SetHiddenField(jsval_, index, ptr);
     }
     static void defaultDeleter(T* obj) {
