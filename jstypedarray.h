@@ -20,7 +20,10 @@ public:
     }
 
     size_t length() const {
-        return env_->GetArrayLength(jsval_);
+        return env_->ToDouble(env_->GetProperty(jsval_, "length"));
+    }
+    size_t byteLength() const {
+        return env_->ToDouble(env_->GetProperty(jsval_, "byteLength"));
     }
     T* buffer() const {
         return reinterpret_cast<T*>(env_->GetTypedArrayData(jsval_));
