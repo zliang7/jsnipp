@@ -27,6 +27,7 @@
 
 #include <cassert>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -109,7 +110,50 @@ protected:
 };
 
 
-class JSGlobalValue final {
+static_assert(std::is_same<std::add_pointer<_JsGlobalValue>::type, JsGlobalValue>::value, "");
+typedef std::shared_ptr<_JsGlobalValue> _JSGlobalValue;
+class JSGlobalValue: _JSGlobalValue {
+public:
+    JSGlobalValue(std::nullptr_t = nullptr):
+        _JSGlobalValue(nullptr, Deleter()) {}
+    JSGlobalValue(JsGlobalValue gv):
+        _JSGlobalValue(gv, Deleter()) {}
+    JSGlobalValue(const JSGlobalValue& gv):
+        _JSGlobalValue(gv) {};
+
+    // TODO: thread check
+    explicit JSGlobalValue(JSValue jsval):
+        JSGlobalValue(env()->NewGlobalValue(jsval.jsval_)) {}
+    operator JSValue() const {
+        return JSValue::from(env()->GetGlobalValue(get()));
+    }
+    operator JsGlobalValue() const {
+        return get();
+    }
+    operator bool() const {
+        return _JSGlobalValue::operator bool();
+    }
+    bool operator ==(const JSGlobalValue& that) const {
+        // FIXME: persistent handle should not be used to identify an object.
+        return get() == that.get();
+    }
+
+    void makeWeak(JSNIGCCallback callback, void* data = nullptr) {
+        assert(get() != nullptr && callback != nullptr);
+        env()->SetWeakGCCallback(get(), data, callback);
+    }
+
+private:
+    struct Deleter {
+        void operator()(JsGlobalValue gv) const {
+            if (gv) env()->DeleteGlobalValue(gv);
+        }
+    };
+    static JSNIEnv* env() {
+        return JSValue::env_;
+    }
+};
+/*class JSGlobalValue final {
 public:
     JSGlobalValue(): jsgval_(nullptr) {}
     JSGlobalValue(JsValue jsval):
@@ -148,7 +192,7 @@ private:
     static JSNIEnv* env() {
         return JSValue::env_;
     }
-};
+};*/
 
 
 class JSEscapableScope {
