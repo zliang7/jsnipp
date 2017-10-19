@@ -121,9 +121,9 @@ public:
                    Deleter deleter = JSNativeObject<T>::defaultDeleter);
     JSNativeObject(std::nullptr_t): JSNativeObject(nullptr, 0) {}
 
-    JSNativeObject(T* native, std::function<void(T&, JSObject)> setup):
+    JSNativeObject(T* native, std::function<void(JSObject&)> setup):
         JSNativeObject(native) {
-        setup(*this, jsval_);
+        setup(*this);
     }
 
     JSNativeObject(T* native, JSPropertyList list):

@@ -35,10 +35,9 @@ public:
         return JSString(prefix_);
     }
     // initializer
-    static std::string setup(JSObject cls) {
+    static void setup(JSObject cls) {
         cls.setProperty("echo", JSNativeMethod<Echo, &Echo::echo>());
         cls.defineProperty("prefix", JSPropertyAccessor(JSNativeGetter<Echo, &Echo::prefix>()));
-        return "Echo";
     }
 private:
     std::string prefix_;
@@ -56,7 +55,7 @@ int JSNI_Init(JSNIEnv* env, JsValue exports) {
     //env->RegisterMethod(exports, "sayHello", SayHello);
 
     // register native constructor
-    jsobj.setProperty("Echo", JSNativeConstructor<Echo>(&Echo::setup));
+    jsobj.setProperty("Echo", JSNativeConstructor<Echo>(&Echo::setup, "Echo"));
 /*  obj.setProperty("Echo2", JSNativeConstructor<Echo>({
         {"echo", JSNativeMethod<Echo, &Echo::echo>()},
         {"string", "hello"_js},
