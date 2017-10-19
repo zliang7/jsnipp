@@ -51,16 +51,14 @@ class JSCallbackBase {
 public:
     virtual ~JSCallbackBase() = default;
     operator bool() const {
-        return jsfunc_ != nullptr;
+        return jsfunc_;
     }
     operator JSFunction() const {
         return JSFunction(jsfunc_);
     }
 
 protected:
-    JSCallbackBase(): jsfunc_(nullptr) {}
-    JSCallbackBase(JSFunction jsfunc, bool disposable):
-        jsfunc_(jsfunc? jsfunc: nullptr), disposable_(disposable) {}
+    JSCallbackBase(JSGlobalValue jsfunc = nullptr): jsfunc_(jsfunc) {}
 
     static bool is_safe() {
         return syscall(SYS_gettid) == getpid();
@@ -68,21 +66,21 @@ protected:
 
     //JSGlobalValue jsobj_;
     JSGlobalValue jsfunc_;
-    bool disposable_;
 };
 
 template<typename R, typename ...Ts>
 class JSUnsafeCallback : public JSCallbackBase {
 public:
-    JSUnsafeCallback(): JSCallbackBase() {};
-    JSUnsafeCallback(JSFunction jsfunc, bool disposable = true):
-        JSCallbackBase(jsfunc, disposable) {}
+    JSUnsafeCallback(JSGlobalValue jsfunc = nullptr):
+        JSCallbackBase(jsfunc) {}
+    JSUnsafeCallback(const JSUnsafeCallback& that):
+        JSCallbackBase(that.jsfunc_) {}
+    JSUnsafeCallback(JSFunction jsfunc):
+        JSCallbackBase(jsfunc? JSGlobalValue(jsfunc): nullptr) {}
 
     R operator()(Ts&... args) {
         assert(is_safe());
-        R result = call(std::forward_as_tuple(args...));
-        if (disposable_)  delete this;
-        return result;
+        return call(std::forward_as_tuple(args...));
     }
 
 protected:
@@ -99,7 +97,7 @@ protected:
         JSFunction jsfunc(jsfunc_);
         if (!argv.is_array())
             return static_cast<R>(jsfunc(argv));
-        return static_cast<R>(jsfunc.apply(nullptr, JSArray(argv)));
+        return static_cast<R>(jsfunc.apply(nullptr, JSArray(JsValue(argv))));
     }
 };
 
@@ -114,9 +112,7 @@ public:
 
         args_ = std::make_tuple(args...);
         AsyncThreadWork(NULL, this, [](JSNIEnv*, void*){}, callback);
-        R result = result_.get_future().get();
-        if (this->disposable_)  delete this;
-        return result;
+        return result_.get_future().get();
     }
 
 private:
@@ -134,17 +130,27 @@ public:
     using JSUnsafeCallback<void, Ts...>::JSUnsafeCallback;
 
     void operator()(Ts&... args) {
+        assert(self_ == this);  // object must be allocated in heap
         args_ = std::make_tuple(args...);
         AsyncThreadWork(NULL, this, [](JSNIEnv*, void*){}, callback);
     }
+
+#ifndef NDEBUG
+    static void* operator new (std::size_t count) {
+        void* addr = ::operator new(count);
+        reinterpret_cast<JSCallback<void, Ts...>*>(addr)->self_ = addr;
+        return addr;
+    }
+#endif
 
 private:
     static void callback(JSNIEnv* env, void* data) {
         auto self = reinterpret_cast<JSCallback<void, Ts...>*>(data);
         self->call(self->args_);
-        if (self->disposable_)  delete self;
+        delete self;
     }
     std::tuple<Ts...> args_;
+    void* self_;
 };
 
 }
