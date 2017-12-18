@@ -23,6 +23,7 @@
  * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
  * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+#pragma once
 
 #include "jsvalue.h"
 #include "jsprimitive.h"
@@ -33,3 +34,21 @@
 #include "jscallback.h"
 #include "jsconstructor.h"
 #include "jsexception.h"
+
+#include "jsobject.hpp"
+#include "jsprimitive.hpp"
+
+namespace jsni{
+
+inline JSObject initialize(JSNIEnv* env, JSValueRef exports = nullptr) {
+    internal::JSGlobalEnvironment::env = env;
+    if (JSNIIsObject(env, exports))
+        return JSObject(exports);
+    return nullptr;
+}
+
+inline bool JSValue::operator ==(const JSValue& that) const {
+    return JSObject::constructor()["is"].as(Function)(*this, that).as(Boolean);
+}
+
+}

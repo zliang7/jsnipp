@@ -25,191 +25,329 @@
  */
 #pragma once
 
+#include <string.h>
+
 #include <cassert>
-#include <map>
-#include <memory>
+#include <functional>
+#include <initializer_list>
 #include <string>
-#include <vector>
+#include <type_traits>
 
 #include <jsni.h>
 
-namespace jsnipp {
+namespace jsni {
+
+namespace internal {
+
+template <typename Dummy>
+struct _JSGlobalEnvironment {
+    static JSNIEnv* env;
+};
+template <typename Dummy>
+JSNIEnv* _JSGlobalEnvironment<Dummy>::env = NULL;
+
+typedef _JSGlobalEnvironment<void> JSGlobalEnvironment;
+
+}
+
+inline JSNIEnv* env() {
+    return internal::JSGlobalEnvironment::env;
+}
+inline int version() {
+    return JSNIGetVersion(env());
+}
+
 
 class JSValue;
-class JSEnvironment final {
-public:
-    const JSNIEnv* operator->() const {
-        return env_;
-    }
-    operator JSNIEnv*() const {
-        return env_;
-    }
+class JSUndefined;
+class JSNull;
+class JSBoolean;
+class JSNumber;
+class JSString;
+class JSSymbol;
+class JSObject;
+class JSFunction;
+class JSArray;
+template <typename, bool> class JSTypedArray;
 
-    int version() const {
-        return env_->GetVersion();
-    }
-
-private:
-    JSEnvironment(const JSNIEnv* env): env_(env) {}
-    const JSNIEnv* env_ = nullptr;
-
-    friend class JSValue;
+template <typename T> struct JSTypeID {
+    typedef T type;
 };
+constexpr JSTypeID<JSValue>     Valid{};
+constexpr JSTypeID<JSUndefined> Undefined{};
+constexpr JSTypeID<JSNull>      Null{};
+constexpr JSTypeID<JSBoolean>   Boolean{};
+constexpr JSTypeID<JSNumber>    Number{};
+constexpr JSTypeID<JSString>    String{};
+constexpr JSTypeID<JSSymbol>    Symbol{};
+constexpr JSTypeID<JSObject>    Object{};
+constexpr JSTypeID<JSFunction>  Function{};
+constexpr JSTypeID<JSArray>     Array{};
 
+constexpr JSTypeID<JSTypedArray<void, false>>     TypedArray{};
+constexpr JSTypeID<JSTypedArray<int8_t, false>>   Int8Array{};
+constexpr JSTypeID<JSTypedArray<uint8_t, false>>  Uint8Array{};
+constexpr JSTypeID<JSTypedArray<uint8_t, true>>   Uint8ClampedArray{};
+constexpr JSTypeID<JSTypedArray<int16_t, false>>  Int16Array{};
+constexpr JSTypeID<JSTypedArray<uint16_t, false>> Uint16Array{};
+constexpr JSTypeID<JSTypedArray<int32_t, false>>  Int32Array{};
+constexpr JSTypeID<JSTypedArray<uint32_t, false>> Uint32Array{};
+constexpr JSTypeID<JSTypedArray<float, false>>    Float32Array{};
+constexpr JSTypeID<JSTypedArray<double, false>>   Float64Array{};
 
-class JSValue {
+class JSValue : protected internal::JSGlobalEnvironment {
 public:
-    static void setup(JSNIEnv* env) {
-        assert(env_ == nullptr && env != nullptr);
-        env_ = env;
+    // construct with raw JSValueRef value
+    constexpr JSValue(): jsval_(nullptr) {}
+    constexpr JSValue(JSValueRef jsval): jsval_(jsval) {}
+
+    // converting constructors of primitive types
+    JSValue(std::nullptr_t):
+        jsval_(JSNINewNull(env)) {}
+    JSValue(bool boolean):
+        jsval_(JSNINewBoolean(env, boolean)) {}
+    template <typename T, typename = typename
+              std::enable_if<std::is_arithmetic<T>::value>::type>
+    JSValue(T number):
+        jsval_(JSNINewNumber(env, number)) {}
+    JSValue(const std::string& string):
+        jsval_(JSNINewStringFromUtf8(env, string.c_str(), string.length())) {}
+    JSValue(const char* cstring):
+        jsval_(JSNINewStringFromUtf8(env, cstring, strlen(cstring))) {}
+
+    // converting constructors of object
+    JSValue(std::initializer_list<std::pair<std::string, JSValue>> list):
+        jsval_(JSNINewObject(env)) {
+        for (auto&& p : list)
+            JSNISetProperty(env, jsval_, p.first.c_str(), p.second);
+    }
+    JSValue(std::initializer_list<JSValue> list):
+        jsval_(JSNINewArray(env, list.size())) {
+        for (auto i = list.begin(); i < list.end(); ++i)
+            JSNISetArrayElement(env, jsval_, i - list.begin(), *i);
     }
 
-    static JSValue from(void);
-    static JSValue from(std::nullptr_t null);
-    static JSValue from(bool boolean);
-    static JSValue from(double number);
-    static JSValue from(const std::string& string);
-    static JSValue from(const char* cstring);
-    static JSValue from(NativeFunctionCallback func);
-    template<typename T>
-    static JSValue from(const std::map<std::string, T>& object);
-    template<typename T>
-    static JSValue from(const std::vector<T>& array);
-    static JSValue from(JsValue jsval);
-    static JSValue from(const JSValue& jsval) { return jsval; }
-
-    bool is_undefined() const  { return env_->IsUndefined(jsval_); }
-    bool is_null() const       { return env_->IsNull(jsval_); }
-    bool is_boolean() const    { return env_->IsBoolean(jsval_); }
-    bool is_number() const     { return env_->IsNumber(jsval_); }
-    bool is_string() const     { return env_->IsString(jsval_); }
-    bool is_object() const     { return env_->IsObject(jsval_); }
-    bool is_function() const   { return env_->IsFunction(jsval_); }
-    bool is_array() const      { return env_->IsArray(jsval_); }
-    bool is_typedarray() const { return env_->IsTypedArray(jsval_); }
-    bool is_valid() const      { return !env_->IsEmpty(jsval_); }
-
-    bool operator ==(const JSValue& that) const {
-        return false; // TODO
+    constexpr explicit operator bool() const {
+        return jsval_ != nullptr;
     }
-    operator JsValue() const {
+
+    constexpr operator JSValueRef() const {
         return jsval_;
     }
 
-    // clang will complain the class is not a POD type without:
-    JSValue() = delete;
+    bool operator == (const JSValue& that) const;
+    bool operator != (const JSValue& that) const {
+        return !(*this == that);
+    }
+
+    // type checking, casting and converting
+    template <typename T>
+    constexpr bool is(JSTypeID<T> = JSTypeID<T>()) const {
+        return T::check(*this);
+    }
+    template <typename T>
+    constexpr T as(JSTypeID<T> = JSTypeID<T>()) const {
+#if __cplusplus >= 201402L
+        assert(is<T>());
+#endif
+        return *reinterpret_cast<const T*>(this);
+    }
+    template <typename T>
+    constexpr T to(JSTypeID<T> = JSTypeID<T>()) const {
+        return T::from(*this);
+    }
+
+    static bool check(JSValueRef jsval) {
+        return !JSNIIsEmpty(env, jsval);
+    }
 
 protected:
-    JSValue(JsValue jsval): jsval_(jsval) {}
-    JsValue jsval_;
-
-    static JSEnvironment env_;
-    friend class JSGlobalValue;
-    friend class JSScope;
-    friend class JSEscapableScope;
+    JSValueRef jsval_;
 };
 
+#if 1
 
-static_assert(std::is_same<std::add_pointer<_JsGlobalValue>::type, JsGlobalValue>::value, "");
-typedef std::shared_ptr<_JsGlobalValue> _JSGlobalValue;
+class JSGlobalValue {
+public:
+    // construct with raw JSGlobalRef value
+    constexpr JSGlobalValue(std::nullptr_t = nullptr): jsgval_(nullptr) {}
+    JSGlobalValue(JSGlobalValueRef jsgval): jsgval_(jsgval) {
+        if (jsgval_)  JSNIAcquireGlobalValue(env(), jsgval_);
+    }
+    JSGlobalValue(JSGlobalValueRef&& jsgval): jsgval_(jsgval) {
+        jsgval = nullptr;
+    }
+    ~JSGlobalValue() {
+        if (jsgval_)  JSNIReleaseGlobalValue(env(), jsgval_);
+    }
+
+    // copy / move constructors
+    JSGlobalValue(const JSGlobalValue& that):
+        JSGlobalValue(that.jsgval_) {}
+    JSGlobalValue(JSGlobalValue&& that): jsgval_(that.jsgval_) {
+        that.jsgval_ = nullptr;
+    }
+
+    // converting constructor for local value
+    explicit JSGlobalValue(const JSValue& jsval):
+        jsgval_(JSNINewGlobalValue(env(), jsval)) {}
+
+    JSGlobalValue& operator =(const JSGlobalValue& that) {
+        if (jsgval_)  JSNIReleaseGlobalValue(env(), jsgval_);
+        jsgval_ = that.jsgval_;
+        if (jsgval_)  JSNIAcquireGlobalValue(env(), jsgval_);
+        return *this;
+    }
+    JSGlobalValue& operator =(JSGlobalValue&& that) {
+        if (jsgval_)  JSNIReleaseGlobalValue(env(), jsgval_);
+        jsgval_ = that.jsgval_;
+        that.jsgval_ = nullptr;
+        return *this;
+    }
+
+    explicit operator bool() const {
+        return jsgval_ != nullptr;
+    }
+
+    // convert to local value
+    template <typename T, typename = typename
+              std::enable_if<std::is_base_of<JSValue, T>::value>::type>
+    operator T() const {
+        assert(jsgval_);
+        return T(JSNIGetGlobalValue(env(), jsgval_));
+    }
+
+    // get raw value
+    operator JSGlobalValueRef() const {
+        return jsgval_;
+    }
+
+    // compare with JSValue
+    bool operator ==(const JSValue& that) const {
+        return that == *this;
+    }
+    bool operator !=(const JSValue& that) const {
+        return that != *this;
+    }
+
+    void setGCCallback(const std::function<void()>& callback) {
+        assert(*this && callback);
+        auto data = new std::function<void()>(callback);
+        JSNISetGCCallback(env(), jsgval_, data, [](JSNIEnv*, void* data){
+            auto callback = reinterpret_cast<std::function<void()>*>(data);
+            (*callback)();
+            delete callback;
+        });
+    }
+    //void setGCCallback(const std::function<void(JSValue)>& callback);
+
+private:
+    JSGlobalValueRef jsgval_;
+};
+
+#else
+
+using _JSGlobalValue =
+    std::shared_ptr<std::remove_pointer<JSGlobalValueRef>::type>;
 class JSGlobalValue: _JSGlobalValue {
 public:
     JSGlobalValue(std::nullptr_t = nullptr):
         _JSGlobalValue(nullptr, Deleter()) {}
-    JSGlobalValue(JsGlobalValue gv):
-        _JSGlobalValue(gv, Deleter()) {}
-    JSGlobalValue(const JSGlobalValue& gv):
-        _JSGlobalValue(gv) {};
+    JSGlobalValue(JSGlobalValueRef jsgval):
+        _JSGlobalValue(jsgval, Deleter()) {}
 
-    // TODO: thread check
+    // copy / move constructors
+    JSGlobalValue(const JSGlobalValue& that):
+        _JSGlobalValue(that) {};
+    JSGlobalValue(JSGlobalValue&& that):
+        _JSGlobalValue(that) {};
+
+    // converting constructor for local value
     explicit JSGlobalValue(JSValue jsval):
-        JSGlobalValue(env()->NewGlobalValue(jsval.jsval_)) {}
-    operator JSValue() const {
-        return JSValue::from(env()->GetGlobalValue(get()));
+        JSGlobalValue(JSNINewGlobalValue(env(), jsval)) {}
+
+    JSGlobalValue& operator =(const JSGlobalValue& that) {
+        _JSGlobalValue::operator=(that);
+        return *this;
     }
-    operator JsGlobalValue() const {
-        return get();
+    JSGlobalValue& operator =(JSGlobalValue&& that) {
+        _JSGlobalValue::operator=(that);
+        return *this;
     }
-    operator bool() const {
+
+    explicit operator bool() const {
         return _JSGlobalValue::operator bool();
     }
-    bool operator ==(const JSGlobalValue& that) const {
-        // FIXME: persistent handle should not be used to identify an object.
-        return get() == that.get();
+
+    // convert to local value
+    template <typename T, typename = typename
+              std::enable_if<std::is_base_of<JSValue, T>::value>::type>
+    operator T() const {
+        assert(get());
+        return T(JSNIGetGlobalValue(env(), get()));
     }
 
-    void makeWeak(JSNIGCCallback callback, void* data = nullptr) {
-        assert(get() != nullptr && callback != nullptr);
-        env()->SetWeakGCCallback(get(), data, callback);
+    // get raw value
+    operator JSGlobalValueRef() const {
+        return get();
+    }
+
+    // compare with JSValue
+    bool operator ==(const JSValue& that) const {
+        return that == *this;
+    }
+    bool operator !=(const JSValue& that) const {
+        return that != *this;
+    }
+
+    void setGCCallback(const std::function<void()>& callback) {
+        assert(get() && callback);
+        auto data = new std::function<void()>(callback);
+        JSNISetGCCallback(env(), get(), data, [](JSNIEnv*, void* data){
+            auto callback = reinterpret_cast<std::function<void()>*>(data);
+            (*callback)();
+            delete callback;
+        });
     }
 
 private:
     struct Deleter {
-        void operator()(JsGlobalValue gv) const {
-            if (gv) env()->DeleteGlobalValue(gv);
+        void operator()(JSGlobalValueRef jsgval) const {
+            if (jsgval) JSNIDeleteGlobalValue(env(), jsgval);
         }
     };
-    static JSNIEnv* env() {
-        return JSValue::env_;
-    }
 };
-/*class JSGlobalValue final {
+#endif
+
+class JSScope {
 public:
-    JSGlobalValue(): jsgval_(nullptr) {}
-    JSGlobalValue(JsValue jsval):
-        jsgval_(env()->NewGlobalValue(jsval)) {}
-    JSGlobalValue(JSGlobalValue&& gv): jsgval_(gv.jsgval_) {
-        gv.jsgval_ = nullptr;
+    JSScope(): slot_() {
+        JSNIPushLocalScope(env());
     }
-    JSGlobalValue(const JSGlobalValue&) = delete;
-    ~JSGlobalValue() {
-        if (jsgval_ != nullptr)
-            env()->DeleteGlobalValue(jsgval_);
-    }
-
-    operator JSValue() const {
-        assert(jsgval_);
-        return JSValue::from(env()->GetGlobalValue(jsgval_));
-    }
-    operator JsGlobalValue() const {
-        return jsgval_;
-    }
-    operator bool() const {
-        return jsgval_ != nullptr;
-    }
-    bool operator ==(const JSGlobalValue& that) const {
-        // FIXME: persistent handle should not be used to identify an object.
-        return jsgval_ == that.jsgval_;
-    }
-
-    void makeWeak(JSNIGCCallback callback, void* data = nullptr) {
-        assert(jsgval_ != nullptr && callback != nullptr);
-        env()->SetWeakGCCallback(jsgval_, data, callback);
-    }
-
-private:
-    JsGlobalValue jsgval_;
-    static JSNIEnv* env() {
-        return JSValue::env_;
-    }
-};*/
-
-
-class JSEscapableScope {
-public:
-    JSEscapableScope() {
-        JSValue::env_->PushLocalScope();
-    }
-    JSValue escape(JSValue jsval) {
-        return JSValue::env_->PopLocalScope(jsval);
-    }
-};
-class JSScope final : JSEscapableScope {
-public:
     ~JSScope() {
-        JSValue::env_->PopLocalScope(nullptr);
+        JSNIPopLocalScope(env());
     }
-    JSValue escape(JSValue jsval) = delete;
+    JSValue& escape(JSValue jsval) {
+        return slot_ = jsval;
+    }
+private:
+    JSValue slot_;
 };
+
+
+/* NOT tested
+void JSGlobalValue::setGCCallback(const std::function<void(JSValue)>& callback) {
+    assert(*this && callback);
+    JSGlobalValueRef jsgval = jsgval_;
+    auto data = new std::function<void(JSNIEnv* env)>(
+        [callback, jsgval](JSNIEnv* env) {
+            callback(JSNIGetGlobalValue(env, jsgval));
+    });
+    JSNISetGCCallback(env(), jsgval_, data, [](JSNIEnv* env, void* data) {
+        auto callback = reinterpret_cast<std::function<void(JSNIEnv*)>*>(data);
+        (*callback)(env);
+        delete callback;
+    });
+}*/
 
 }

@@ -27,44 +27,33 @@
 
 #include <string>
 
-#include <jsni.h>
-
 #include "jsvalue.h"
 
-namespace jsnipp {
+namespace jsni {
 
-namespace {
-
-typedef void (*JSNINativeInterface::*Thrower)(const char*);
-constexpr static Thrower trampoline[] = {
-    &JSNINativeInterface::ThrowErrorException,
-    &JSNINativeInterface::ThrowTypeErrorException,
-    &JSNINativeInterface::ThrowRangeErrorException
-};
-
-}
-
-enum ErrorType {
-    Error = 0,
-    TypeError,
-    RangeError
-};
-
-template<int type>
 class JSException final {
 public:
-    JSException(const std::string& message): message_(message) {}
-    void raise() const {
-        (JSValue::env_->*trampoline[type])(message_.c_str());
+    enum Type {
+        Error = 0,
+        TypeError,
+        RangeError
+    };
+    static void raise(Type type, const std::string& message) {
+        typedef void (*Thrower)(JSNIEnv*, const char*);
+        constexpr static Thrower funcs[] = {
+            JSNIThrowErrorException,
+            JSNIThrowTypeErrorException,
+            JSNIThrowRangeErrorException
+        };
+        funcs[type](env(), message.c_str());
     }
 
-    static bool checkAndClear() {
-        //return JSValue::env_->ErrorCheck(); FIXME
-        return false;
+    static bool has() {
+        return JSNIHasException(env());
     }
-
-private:
-    std::string message_;
+    static void clear() {
+        JSNIClearException(env());
+    }
 };
 
 }

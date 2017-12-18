@@ -25,189 +25,219 @@
  */
 #pragma once
 
-#include <cassert>
 #include <functional>
+#include <initializer_list>
+#include <memory>
 #include <string>
-
-#include <jsni.h>
+#include <utility>
 
 #include "jsvalue.h"
-#include "jsprimitive.h"
 
-namespace jsnipp {
-
-typedef std::initializer_list<std::pair<std::string, JSValue>> JSPropertyList;
+namespace jsni {
 
 class JSPropertyDescriptor;
+class JSFunction;
 
 class JSObject : public JSValue {
 public:
-    JSObject(): JSValue(env_->NewObject()) {}
-    JSObject(std::nullptr_t): JSValue(env_->NewNull()) {}
-    JSObject(JSPropertyList list): JSObject() {
-        for (auto& p: list)
-            setProperty(p.first.c_str(), p.second);
+    JSObject(JSValueRef jsval): JSValue(jsval) {
+        assert(check(*this));
     }
 
-    JSObject(const JSValue& jsval);
-    JSObject(JsValue jsval): JSValue(jsval) {
-        assert(is_object());
+    JSObject(): JSValue(JSNINewObject(env)) {}
+
+    using initializer_list =
+            std::initializer_list<std::pair<std::string, JSValue>>;
+    JSObject(initializer_list list): JSObject() {
+        for (auto&& p: list)
+            setProperty(p.first, p.second);
+    }
+    template <class T, typename = typename std::enable_if<
+            std::is_constructible<std::string, typename T::key_type>::value &&
+            std::is_constructible<JSValue, typename T::mapped_type>::value>::type>
+    JSObject(const T& map): JSObject() {
+        for (auto&& p: map)
+            setProperty(p.first, p.second);
+    }
+
+    template <typename... Ts>
+    JSObject(const std::string& name, JSValue value, Ts&&... args):
+        JSObject(std::forward<Ts>(args)...) {
+        setProperty(name, value);
     }
 
     JSObject prototype() const {
-        return JSObject(env_->GetPrototype(jsval_));
+        return JSObject(JSNIGetPrototype(env, jsval_), true);
+    }
+    void setPrototype(JSObject proto) {
+        callMethod("setPrototypeOf", proto);
+    }
+    bool isPrototypeOf(JSObject object) const {
+        auto self = const_cast<JSObject*>(this);
+        return self->callMethod("isPrototypeOf", object).as(Boolean);
     }
 
-    JSString toString() const {
-        JSValue jsfunc = getProperty("toString");
-        return env_->CallFunction(jsfunc, jsval_, 0, NULL);
+    std::string toString() const {
+        auto self = const_cast<JSObject*>(this);
+        return self->callMethod("toString").as(String);
     }
 
-    JSValue getProperty(const std::string& key) const {
-        return from(env_->GetProperty(jsval_, key.c_str()));
+    // TODO: support Symbol
+    template <typename T>
+    T getProperty(const std::string& name, JSTypeID<T> = JSTypeID<T>()) const {
+        return getProperty(name).to<T>();
     }
-    bool setProperty(const std::string& key, JSValue jsval) {
-        return env_->SetProperty(jsval_, key.c_str(), jsval);
+    JSValue getProperty(const std::string& name) const {
+        return JSNIGetProperty(env, jsval_, name.c_str());
     }
-    bool hasProperty(const std::string& key) const {
-        return env_->HasProperty(jsval_, key.c_str());
+    bool setProperty(const std::string& name, JSValue jsval) {
+        return JSNISetProperty(env, jsval_, name.c_str(), jsval);
     }
-    bool deleteProperty(const std::string& key) {
-        return env_->DeleteProperty(jsval_, key.c_str());
+    bool hasProperty(const std::string& name) const {
+        return JSNIHasProperty(env, jsval_, name.c_str());
     }
-    void defineProperty(const std::string& name, JSPropertyDescriptor descriptor);
+    bool deleteProperty(const std::string& name) {
+        return JSNIDeleteProperty(env,jsval_, name.c_str());
+    }
+    bool defineProperty(const std::string& name,
+                        const JSPropertyDescriptor& descriptor);
 
-    class Accessor final {
+    template <typename... Ts>
+    JSValue callMethod(const std::string& name, Ts&&... args);
+
+/*  class Accessor final {
     public:
         operator JSValue() const {
-            return obj_.getProperty(key_);
+            return obj_.getProperty(name_);
         }
         Accessor& operator=(JSValue value) {
-            obj_.setProperty(key_, value);
+            obj_.setProperty(name_, value);
             return *this;
         }
         Accessor& operator=(const Accessor& ref) {
-            obj_.setProperty(key_, ref);
+            obj_.setProperty(name_, ref);
             return *this;
         }
 
     private:
         Accessor(const Accessor&) = default;
-        Accessor(JSObject& obj, const std::string& key):
-            obj_(obj), key_(key){}
+        Accessor(JSObject& obj, const std::string& name):
+            obj_(obj), name_(name){}
 
-        const std::string& key_;
+        const std::string& name_;
         JSObject& obj_;
         friend class JSObject;
-    };
-    JSValue operator [](const std::string& key) const {
-        return getProperty(key);
+    };*/
+    JSValue operator [](const std::string& name) const {
+        return getProperty(name);
     }
-    Accessor operator [](const std::string& key) {
-        return Accessor(*this, key);
+    JSValue operator [](const char* name) const {
+        return getProperty(name);
     }
+/*  Accessor operator [](const std::string& name) {
+        return Accessor(*this, name);
+    }*/
+
+    static bool check(JSValueRef jsval) {
+        return JSNIIsObject(env, jsval);
+    }
+    static JSObject from(JSValue jsval);
 
 protected:
-    JSObject(int cnt):
-        JSValue(env_->NewObjectWithHiddenField(cnt)) {}
+    constexpr JSObject(JSValueRef jsval, bool): JSValue(jsval) {}
+    explicit JSObject(int cnt):
+        JSValue(JSNINewObjectWithInternalField(env, cnt)) {}
+
+    static JSObject constructor() {
+        return JSObject().getProperty("constructor").as(Object);
+    }
+    friend class JSValue;
 };
 
 
 template<class T>
 class JSNativeObject : public JSObject {
 public:
-    typedef void (*Deleter)(T*);
     JSNativeObject(T* native, unsigned int count = 0,
-                   Deleter deleter = JSNativeObject<T>::defaultDeleter);
-    JSNativeObject(std::nullptr_t): JSNativeObject(nullptr, 0) {}
+                   std::function<void(T*)> deleter = std::default_delete<T>());
+    JSNativeObject(std::nullptr_t = nullptr): JSNativeObject(nullptr, 0) {}
 
-    JSNativeObject(T* native, std::function<void(JSObject&)> setup):
-        JSNativeObject(native) {
-        setup(*this);
-    }
-
-    JSNativeObject(T* native, JSPropertyList list):
-        JSNativeObject(native) {
-        for (auto& p: list)
+/*  JSNativeObject(T* native, initializer_list list): JSNativeObject(native) {
+        for (auto&& p: list)
             setProperty(p.first, p.second);
-    }
+    }*/
 
-    JSNativeObject(JsValue jsval);
+    JSNativeObject(JSValueRef jsval);
+
+    T* operator->() const noexcept {
+        return this->native();
+    }
+    T& operator*() const noexcept {
+        return *this->native();
+    }
 
     T* native() const {
-        int index = env_->HiddenFieldCount(jsval_) - 1;
-        return reinterpret_cast<T*>(getPrivate(index));
+        return reinterpret_cast<T*>(getPrivate(count()));
     }
-    void reset(T* native);
+    T* reset(T* native);
 
-protected:
+private:
+    int count() const {
+        return JSNIInternalFieldCount(env, jsval_) - 2;
+    }
     void* getPrivate(int index) const {
-        assert(index < env_->HiddenFieldCount(jsval_) && index >= 0);
-        return env_->GetHiddenField(jsval_, index);
+        return JSNIGetInternalField(env, jsval_, index);
     }
     void setPrivate(int index, void* ptr) {
-        assert(index < env_->HiddenFieldCount(jsval_) && index >= 0);
-        return env_->SetHiddenField(jsval_, index, ptr);
-    }
-    static void defaultDeleter(T* obj) {
-        delete obj;
+        return JSNISetInternalField(env, jsval_, index, ptr);
     }
 };
 
 }
 
 
-#include "jsproperty.h"
+#include <cassert>
+#if (__cpp_rtti || defined(__GXX_RTTI)) && !defined(NDEBUG)
+#include <typeinfo>
+#endif
 
-namespace jsnipp {
-
-inline void JSObject::defineProperty(const std::string& name,
-                                     JSPropertyDescriptor descriptor) {
-    JSObject object(JSObject().prototype()["constructor"]);
-    JSFunction define(object["defineProperty"]);
-    define.call(object, *this, name, descriptor);
-}
-
+namespace jsni {
 
 template<class T>
 JSNativeObject<T>::JSNativeObject(T* native, unsigned int count,
-                                  Deleter deleter):
-    JSObject(count + 3) {
-    setPrivate(count + 2, native);
+                                  std::function<void(T*)> deleter):
+    JSObject(count + 2) {
+    reset(native);
+    if (deleter)
+        JSGlobalValue(jsval_).setGCCallback(std::bind(deleter, native));
+
 #if (__cpp_rtti || defined(__GXX_RTTI)) && !defined(NDEBUG)
     auto hash = static_cast<uintptr_t>(typeid(T).hash_code());
-    setPrivate(count, reinterpret_cast<void*>(hash));
+    setPrivate(count + 1, reinterpret_cast<void*>(hash));
 #endif
-
-    if (deleter == nullptr)  return;
-    setPrivate(count + 1, reinterpret_cast<void*>(deleter));
-    env_->SetGCCallback(jsval_, jsval_, [](JSNIEnv*, void* data){
-        JSNativeObject<T> self(reinterpret_cast<JsValue>(data));
-        self.reset(nullptr);
-    });
 }
 
 template<class T>
-JSNativeObject<T>::JSNativeObject(JsValue jsval): JSObject(jsval) {
-    assert(is_object());
-    int index = env_->HiddenFieldCount(jsval_) - 3;
-    assert(index >= 0);
+JSNativeObject<T>::JSNativeObject(JSValueRef jsval): JSObject(jsval) {
 #if (__cpp_rtti || defined(__GXX_RTTI)) && !defined(NDEBUG)
-    auto hash = reinterpret_cast<uintptr_t>(getPrivate(index));
-    assert(typeid(T).hash_code() == static_cast<size_t>(hash));
+    // check native type
+    int index = count() + 1;
+    assert(index > 0);
+    if (!std::is_class<T>::value) {
+        // FIXME: deal with derived class
+        auto hash = reinterpret_cast<uintptr_t>(getPrivate(index));
+        assert(typeid(T).hash_code() == static_cast<size_t>(hash));
+    }
 #endif
 }
 
 template<class T>
-void JSNativeObject<T>::reset(T* native) {
-    T* old = this->native();
-    if (native == old)  return;
-    int index = env_->HiddenFieldCount(jsval_) - 1;
-    setPrivate(index, native);
-
-    auto deleter = reinterpret_cast<Deleter>(getPrivate(index - 1));
-    if (deleter != nullptr)
-        deleter(old);
+T* JSNativeObject<T>::reset(T* native) {
+    int index = count();
+    T* old = reinterpret_cast<T*>(getPrivate(index));
+    if (native == old)  return nullptr;
+    setPrivate(index, reinterpret_cast<void*>(native));
+    return old;
 }
 
 }

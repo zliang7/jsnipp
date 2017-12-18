@@ -25,35 +25,52 @@
  */
 #pragma once
 
-#include <cassert>
 #include <functional>
-
-#include <jsni.h>
 
 #include "jsfunction.h"
 
-namespace jsnipp {
+namespace jsni {
 
 template <class T>
 class JSNativeConstructor : public JSFunction {
 public:
-    JSNativeConstructor(std::function<void(JSObject&)> setup,
-                        const std::string& name = std::string());
-    JSNativeConstructor(JSPropertyList list,
-                        const std::string& name = std::string());
+    // no prototype
+    JSNativeConstructor(const std::string& name = ""): JSFunction(thunk) {
+        setName(name);
+    }
 
-    static JSNativeObject<T> adopt(T* native) {
-/*      assert(class_);
-        JSNativeObject<T> result(env_->GetGlobalValue(class_));
-        result.reset(native);
-        return result;*/
-        return JSNativeObject<T>(native, setup_);
+    // specified prototype
+    JSNativeConstructor(const std::string& name, JSNativeObject<T> prototype);
+    JSNativeConstructor(JSNativeObject<T> prototype):
+        JSNativeConstructor("", prototype) {}
+
+    // user-built prototype
+    JSNativeConstructor(const std::string& name,
+                        std::function<void(JSNativeObject<T>&)> builder):
+        JSNativeConstructor(name, JSNativeObject<T>(nullptr)) {
+        auto proto = JSNativeObject<T>(prototype_);
+        builder(proto);
+    }
+    JSNativeConstructor(std::function<void(JSNativeObject<T>&)> builder):
+        JSNativeConstructor("", builder) {}
+    JSNativeConstructor(initializer_list list):
+        JSNativeConstructor<T>([&list](JSNativeObject<T>& proto) {
+            for (auto&& p: list) proto.setProperty(p.first, p.second);
+        }) {}
+
+    static JSNativeObject<T> wrap(T* native,
+            std::function<void(T*)> deleter = std::default_delete<T>()) {
+        JSNativeObject<T> jsobj(native, 0, deleter);
+        if (prototype_)
+            jsobj.setPrototype(prototype_);
+        return jsobj;
     }
 
 private:
-    static void thunk(JSNIEnv* env, const CallbackInfo info);
-    static std::function<void(JSObject&)> setup_;
-    //static JsGlobalValue class_;
+    void setName(const std::string& name);
+
+    static void thunk(JSNIEnv* env, const JSNICallbackInfo info);
+    static JSGlobalValue prototype_;
 };
 
 }
@@ -61,71 +78,60 @@ private:
 
 //////////////////////////////////////////////////////////////////////////////
 
+#include <cassert>
 #if __cpp_rtti || __GXX_RTTI
 #include <cxxabi.h>
 #include <typeinfo>
 #endif
 
-namespace jsnipp {
-
-namespace {
-
-inline void setup_list(JSObject& cls, JSPropertyList list) {
-    for (auto& p: list)
-        cls.setProperty(p.first, p.second);
-}
-
-}
-
+namespace jsni {
 
 template <class T>
-//JsGlobalValue JSNativeConstructor<T>::class_ = nullptr;
-std::function<void(JSObject&)> JSNativeConstructor<T>::setup_ = nullptr;
+JSGlobalValue JSNativeConstructor<T>::prototype_ = nullptr;
 
 template <class T>
 JSNativeConstructor<T>::JSNativeConstructor(
-        std::function<void(JSObject&)> setup, const std::string& name):
+        const std::string& name, JSNativeObject<T> prototype):
     JSFunction(thunk) {
-    /*JSNativeObject<T> cls(nullptr);
-    std::string name;
-    if (setup)
-        name = setup(cls);*/
+    setName(name);
+    setProperty("prototype", prototype);
+    prototype_ = JSGlobalValue(prototype);
+}
+
+template <class T>
+void JSNativeConstructor<T>::setName(const std::string& name) {
     if (!name.empty()) {
-        setName(name);
+        JSFunction::setName(name);
     } else {
 #if __cpp_rtti || __GXX_RTTI
         size_t len;
         char *cname = abi::__cxa_demangle(typeid(T).name(), NULL, &len, NULL);
-        setName(std::string(cname, len));
+        JSFunction::setName(std::string(cname, len));
         free(cname);
 #endif
     }
-    //class_ = env_->NewGlobalValue(cls);
-    assert(!setup_);
-    setup_ = setup;
 }
 
 template <class T>
-JSNativeConstructor<T>::JSNativeConstructor(JSPropertyList list,
-                                            const std::string& name):
-    JSNativeConstructor<T>(
-            std::bind(setup_list, std::placeholders::_1, list), name) {}
+void JSNativeConstructor<T>::thunk(JSNIEnv* env, const JSNICallbackInfo info) {
+    assert(env == JSValue::env);
+    JSObject self = JSNIGetThisOfCallback(env, info);
+    JSObject prototype = self.prototype();
 
-template <class T>
-void JSNativeConstructor<T>::thunk(JSNIEnv* env, const CallbackInfo info) {
-    assert(env == env_);
-    JSObject self = env->GetThis(info);
-#if __cpp_exceptions || __EXCEPTIONS
-    try {
-#endif
-        T* native = new T(self, info);
-        if (native)
-            env->SetReturnValue(info, adopt(native));
-#if __cpp_exceptions || __EXCEPTIONS
-    } catch (JSValue result) {
-        env->SetReturnValue(info, result);
+    /* JSNI has no support of FunctionCallbackInfo::IsConstructCall()
+    if (prototype != prototype_) {
+        // this is a normal function call
+    }*/
+
+    // construct call
+    T* native = new(std::nothrow) T(self, info);
+    if (native == nullptr) {
+        // throw a JavaScript exception
+        return;
     }
-#endif
+    JSNativeObject<T> result(native, 0, std::default_delete<T>());
+    result.setPrototype(prototype);
+    JSNISetReturnValue(env, info, result);
 }
 
 }

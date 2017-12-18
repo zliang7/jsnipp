@@ -28,7 +28,6 @@
 #include <unistd.h>
 #include <sys/syscall.h>
 
-#include <functional>
 #include <future>
 #include <tuple>
 
@@ -45,13 +44,13 @@ void AsyncThreadWork(JSNIEnv* env, void* data,
                      AsyncThreadWorkAfterCallback callback);
 }
 
-namespace jsnipp {
+namespace jsni {
 
 class JSCallbackBase {
 public:
     virtual ~JSCallbackBase() = default;
-    operator bool() const {
-        return jsfunc_;
+    explicit operator bool() const {
+        return (bool)jsfunc_;
     }
     operator JSFunction() const {
         return JSFunction(jsfunc_);
@@ -85,7 +84,7 @@ public:
 
 protected:
     virtual JSValue jsnify(Ts&... args) const {
-        return JSUndefined();
+        return JSValue();
     }
 
     R call(const std::tuple<Ts...>& tuple) const {
@@ -95,9 +94,11 @@ protected:
         JSValue argv = std::apply(jsnify, tuple);
 
         JSFunction jsfunc(jsfunc_);
-        if (!argv.is_array())
+        if (!argv.is(Valid))
+            return static_cast<R>(jsfunc());
+        if (!argv.is(Array))
             return static_cast<R>(jsfunc(argv));
-        return static_cast<R>(jsfunc.apply(nullptr, JSArray(JsValue(argv))));
+        return static_cast<R>(jsfunc.apply(nullptr, argv.as(Array)));
     }
 };
 
@@ -106,7 +107,8 @@ class JSCallback : public JSUnsafeCallback<R, Ts...> {
 public:
     using JSUnsafeCallback<R, Ts...>::JSUnsafeCallback;
 
-    R operator()(Ts&... args) {
+    template<typename ...Us>
+    R operator()(Us&&... args) {
         if (JSUnsafeCallback<R, Ts...>::is_safe())
             return call(std::forward_as_tuple(args...));
 
@@ -129,7 +131,8 @@ class JSCallback<void, Ts...> : public JSUnsafeCallback<void, Ts...> {
 public:
     using JSUnsafeCallback<void, Ts...>::JSUnsafeCallback;
 
-    void operator()(Ts&... args) {
+    template<typename ...Us>
+    void operator()(Us&&... args) {
         assert(self_ == this);  // object must be allocated in heap
         args_ = std::make_tuple(args...);
         AsyncThreadWork(NULL, this, [](JSNIEnv*, void*){}, callback);

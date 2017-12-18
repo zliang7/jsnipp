@@ -26,70 +26,162 @@
 #pragma once
 
 #include "jsobject.h"
-
-namespace jsnipp {
-
-class JSFunction;
-
-class JSPropertyDescriptor : public JSObject {
-public:
-    bool configurable() const {
-        return JSBoolean(getProperty("configurable"));
-    }
-    bool enumerable() const {
-        return JSBoolean(getProperty("enumerable"));
-    }
-    void set_configurable(bool val) {
-        setProperty("configurable", JSBoolean(val));
-    }
-    void set_enumerable(bool val) {
-        setProperty("enumerable", JSBoolean(val));
-    }
-
-protected:
-    JSPropertyDescriptor(bool configurable, bool enumerable): JSObject() {
-        if (configurable) set_configurable(true);
-        if (enumerable)   set_enumerable(true);
-    }
-};
-
-class JSPropertyData final : public JSPropertyDescriptor {
-public:
-    JSPropertyData(JSValue value, bool writable = false,
-                   bool configurable = false, bool enumerable = false);
-};
-
-class JSPropertyAccessor final : public JSPropertyDescriptor {
-public:
-    JSPropertyAccessor(JSFunction getter,
-                       bool configurable = false, bool enumerable = false);
-    JSPropertyAccessor(JSFunction getter, JSFunction setter,
-                       bool configurable = false, bool enumerable = false);
-};
-
-}
-
-
 #include "jsfunction.h"
 
-namespace jsnipp {
+namespace jsni {
 
-inline JSPropertyData::JSPropertyData(
-        JSValue value, bool writable, bool configurable, bool enumerable):
-    JSPropertyDescriptor(configurable, enumerable) {
-    setProperty("value", value);
-    if (writable) setProperty("writable", true_js);
+class JSPropertyDescriptor {
+public:
+    // import from a JavaScript descriptor
+    explicit JSPropertyDescriptor(JSObject descriptor);
+
+    // construct form JSNI raw type
+    JSPropertyDescriptor(const JSNIAccessorPropertyDescriptor& desc):
+        accessor_(desc), getter_(desc.getter), setter_(desc.setter) {}
+    JSPropertyDescriptor(const JSNIDataPropertyDescriptor& desc):
+        data_(desc), getter_(nullptr), setter_(nullptr) {}
+    JSPropertyDescriptor(JSNIPropertyAttributes attributes):
+        getter_(nullptr), setter_(nullptr) {
+        value_ = nullptr;
+        attrib_ = attributes;
+    }
+
+    JSPropertyDescriptor(JSValue value, bool writable = true,
+                         bool enumerable = true, bool configurable = false) {
+        set_configurable(configurable);
+        set_enumerable(enumerable);
+        set_data(value, writable);
+    }
+    template <class T, JSGetterType<T> get>
+    JSPropertyDescriptor(JSNativeGetter<T, get> getter,
+                         bool enumerable = true, bool configurable = false) {
+        set_configurable(configurable);
+        set_enumerable(enumerable);
+        set_accessor(getter);
+    }
+    template <class T, JSGetterType<T> get, JSSetterType<T> set>
+    JSPropertyDescriptor(JSNativeGetter<T, get> getter,
+                         JSNativeSetter<T, set> setter,
+                         bool enumerable = true, bool configurable = false) {
+        set_configurable(configurable);
+        set_enumerable(enumerable);
+        set_accessor(getter, setter);
+    }
+
+    operator JSObject() const;
+    operator JSNIPropertyDescriptor() const;
+
+    bool configurable() const {
+        return !(attrib_ & JSNIDontDelete);
+    }
+    void set_configurable(bool v) {
+        attrib_ = (JSNIPropertyAttributes)
+            (v ? attrib_ & ~JSNIDontDelete : attrib_ | JSNIDontDelete);
+    }
+    bool enumerable() const {
+        return !(attrib_ & JSNIDontEnum);
+    }
+    void set_enumerable(bool v) {
+        attrib_ = (JSNIPropertyAttributes)
+            (v ? attrib_ & ~JSNIDontEnum : attrib_ | JSNIDontEnum);
+    }
+
+    JSValue value() const {
+        return value_;
+    }
+    bool writable() const {
+        return !(attrib_ & JSNIReadOnly);
+    }
+    void set_data(JSValue value, bool writable = false) {
+        getter_ = setter_ = nullptr;
+        value_ = value;
+        attrib_ = (JSNIPropertyAttributes)
+            (writable ? attrib_ & ~JSNIReadOnly : attrib_ | JSNIReadOnly);
+    }
+    bool is_data_descriptor() const {
+        return !is_accessor_descriptor();
+    }
+
+    JSFunction getter() const {
+        return getter_;
+    }
+    JSFunction setter() const {
+        return setter_;
+    }
+    void set_accessor(JSFunction getter, JSFunction setter = nullptr) {
+        accessor_.getter = getter_ = getter;
+        accessor_.setter = setter_ = setter;
+    }
+    bool is_accessor_descriptor(bool native = false) const {
+        if (!getter_ && !setter_)  return false;
+        return !native ||
+               !((getter_ && !accessor_.getter) ||
+                 (setter_ && !accessor_.setter));
+    }
+
+private:
+    static constexpr size_t padding_size =
+        offsetof(JSNIAccessorPropertyDescriptor, attributes) -
+        offsetof(JSNIDataPropertyDescriptor, attributes);
+    union {
+        struct {
+            char padding1[padding_size];
+            JSNIDataPropertyDescriptor data_;
+        };
+        JSNIAccessorPropertyDescriptor accessor_;
+    };
+    JSValueRef& value_ = data_.value;
+    JSNIPropertyAttributes& attrib_ = data_.attributes;
+    JSFunction getter_;
+    JSFunction setter_;
+};
+
 }
 
-inline JSPropertyAccessor::JSPropertyAccessor(
-        JSFunction getter, bool configurable, bool enumerable):
-    JSPropertyDescriptor(configurable, enumerable) {
-    setProperty("get", getter);
+
+namespace jsni {
+
+inline JSPropertyDescriptor::JSPropertyDescriptor(JSObject jsobj) {
+    JSFunction getter, setter;
+    if (jsobj["get"].is(Function))
+        getter = JSFunction(jsobj["get"]);
+    if (jsobj["set"].is(Function))
+        getter = JSFunction(jsobj["set"]);
+    if (getter || setter) {
+        set_accessor(getter, setter);
+    } else {
+        bool writable = jsobj["writable"].to(Boolean);
+        set_data(jsobj["value"], writable);
+    }
+    set_configurable(jsobj["configurable"].to(Boolean));
+    set_enumerable(jsobj["enumerable"].to(Boolean));
 }
-inline JSPropertyAccessor::JSPropertyAccessor(
-        JSFunction getter, JSFunction setter, bool configurable, bool enumerable):
-    JSPropertyAccessor(getter, configurable, enumerable) {
-    setProperty("set", setter);
+
+inline JSPropertyDescriptor::operator JSObject() const {
+    JSObject desc {
+        {"configurable", configurable() },
+        {"enumerable", enumerable() }
+    };
+    if (is_data_descriptor()) {
+        desc["writable"] = writable();
+        desc["value"] = value();
+    } else {
+        desc["get"] = getter_;
+        desc["set"] = setter_;
+    }
+    return desc;
+}
+
+inline JSPropertyDescriptor::operator JSNIPropertyDescriptor() const {
+    JSNIPropertyDescriptor desc = { nullptr,  nullptr};
+    if (is_data_descriptor()) {
+        desc.data_attributes =
+            const_cast<JSNIDataPropertyDescriptor*>(&data_);
+    } else if (is_accessor_descriptor(true)) {
+        desc.accessor_attributes =
+            const_cast<JSNIAccessorPropertyDescriptor*>(&accessor_);
+    }
+    return desc;
 }
 
 }

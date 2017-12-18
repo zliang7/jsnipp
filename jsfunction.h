@@ -27,52 +27,53 @@
 
 #include <cassert>
 
-#include <jsni.h>
-
 #include "jsobject.h"
 #include "jsarray.h"
 
-namespace jsnipp {
+namespace jsni {
 
 class JSFunction : public JSObject {
 public:
-    JSFunction(const JSValue& jsval): JSObject(jsval) {
-        if (!is_function())  jsval_ = JSNull();
-    }
-    JSFunction(JsValue jsval): JSObject(jsval) {
-        assert(is_function());
+    JSFunction(JSValueRef jsval): JSObject(jsval, true) {
+        assert(check(*this));
     }
 
-    // null function
-    JSFunction(std::nullptr_t null = nullptr):
-        JSObject(null) {}
-
-    operator bool() const {
-        return is_function();
-    }
+    // create empty function
+    constexpr JSFunction(std::nullptr_t = nullptr):
+        JSObject(nullptr, true) {}
+    JSFunction(const std::string& arguments, const std::string& body);
 
     std::string name() const {
-        return JSString(getProperty("name"));
+        assert(*this);
+        return getProperty("name", String);
     }
 
-    JSValue apply(JSObject self, JSArray args) const;
+    JSValue apply(JSValue self, JSArray args) const;
     template <typename... Ts>
-    JSValue call(JSObject self, Ts... args) const {
-        return apply(self, JSArray(sizeof...(Ts), args...));
+    JSValue call(JSValue self, Ts&&... args) const {
+        return apply(self, JSArray(sizeof...(Ts), std::forward<Ts>(args)...));
     }
     template <typename... Ts>
-    JSValue operator()(Ts... args) const {
-        return call(nullptr, args...);
+    JSValue operator()(Ts&&... args) const {
+        return call(nullptr, std::forward<Ts>(args)...);
     }
+
+    static bool check(JSValueRef jsval) {
+        return JSNIIsFunction(env, jsval);
+    }
+    static JSFunction from(JSValue jsval);
 
 protected:
-    JSFunction(NativeFunctionCallback callback):
-        JSObject(env_->NewFunction(callback)) {}
+    typedef std::remove_pointer<JSNICallback>::type CallbackType;
+    JSFunction(JSNICallback callback, bool save = false);
+    operator JSNICallback() const;
 
     void setName(const std::string& name);
+    friend class JSPropertyDescriptor;
 };
 
 
+// TODO: JSArguments instead of JSArray
 using JSFunctionType = JSValue (*)(JSObject, JSArray);
 
 template<JSFunctionType function>
@@ -81,12 +82,13 @@ public:
     JSNativeFunction(): JSFunction(thunk){}
 
     JSNativeFunction(const std::string& name): JSNativeFunction() {
-        if (!name.empty())  setName(name);
+        setName(name);
     }
 
 private:
-    static void thunk(JSNIEnv* env, const CallbackInfo info);
+    static void thunk(JSNIEnv* env, const JSNICallbackInfo info);
 };
+
 
 template <class T>
 using JSMethodType = JSValue (T::*)(JSObject, JSArray);
@@ -97,12 +99,13 @@ public:
     JSNativeMethod(): JSFunction(thunk){}
 
     JSNativeMethod(const std::string& name): JSNativeMethod() {
-        if (!name.empty())  setName(name);
+        setName(name);
     }
 
 private:
-    static void thunk(JSNIEnv* env, const CallbackInfo info);
+    static void thunk(JSNIEnv* env, const JSNICallbackInfo info);
 };
+
 
 template <class T>
 using JSGetterType = JSValue (T::*)(JSObject);
@@ -110,10 +113,10 @@ using JSGetterType = JSValue (T::*)(JSObject);
 template <class T, JSGetterType<T> getter>
 class JSNativeGetter : public JSFunction {
 public:
-    JSNativeGetter(): JSFunction(thunk){}
+    JSNativeGetter(): JSFunction(thunk, true){}
 
 private:
-    static void thunk(JSNIEnv* env, const CallbackInfo info);
+    static void thunk(JSNIEnv* env, const JSNICallbackInfo info);
 };
 
 template <class T>
@@ -122,10 +125,22 @@ using JSSetterType = void (T::*)(JSObject, JSValue);
 template <class T, JSSetterType<T> setter>
 class JSNativeSetter : public JSFunction {
 public:
-    JSNativeSetter(): JSFunction(thunk) {}
+    JSNativeSetter(): JSFunction(thunk, true) {}
 
 private:
-    static void thunk(JSNIEnv* env, const CallbackInfo info);
+    static void thunk(JSNIEnv* env, const JSNICallbackInfo info);
+};
+
+template <class T>
+using JSAccessorType = JSValue (T::*)(JSObject, JSValue);
+
+template <class T, JSAccessorType<T> accessor>
+class JSNativeAccessor : public JSFunction {
+public:
+    JSNativeAccessor(): JSFunction(thunk, true){}
+
+private:
+    static void thunk(JSNIEnv* env, const JSNICallbackInfo info);
 };
 
 // FYI: http://stackoverflow.com/questions/15148749/pointer-to-class-member-as-a-template-parameter
@@ -136,67 +151,123 @@ private:
 
 #include "jsproperty.h"
 
-namespace jsnipp {
+namespace jsni {
 
-inline JSValue JSFunction::apply(JSObject self, JSArray args) const {
+inline JSFunction::JSFunction(const std::string& arguments,
+                              const std::string& body):
+    JSObject(constructor()["constructor"].as(Function)(arguments, body), true) {
+    if (!is(Function))  jsval_ = nullptr;
+}
+
+inline JSValue JSFunction::apply(JSValue self, JSArray args) const {
+    assert(*this);
+    if (!*this) {
+        // TODO: throw an error
+        return JSUndefined();
+    }
+
     size_t argc = args.length();
-    JsValue jsvals[argc];
+    JSValueRef jsvals[argc];
     for (size_t i = 0; i < argc; ++i)
         jsvals[i] = args[i];
-    return from(env_->CallFunction(jsval_, self, argc, jsvals));
+    return JSNICallFunction(env, jsval_, self, argc, jsvals);
     /* an alternative implementation
-    JSFunction jsapply = getProperty("apply");
-    JsValue arg = args;
-    return from(env_->CallFunction(jsapply, self, 1, &arg));*/
+    JSValueRef jsfunc = getProperty("apply");
+    JSValueRef arg = args;
+    return JSNICallFunction(env, jsfunc, self, 1, &arg);*/
+}
+
+inline JSFunction::JSFunction(JSNICallback callback, bool save):
+    JSFunction(JSNINewFunction(env, callback)) {
+    if (save) {
+        auto jsobj = JSNativeObject<CallbackType>(callback, 0, nullptr);
+        defineProperty("_jsni", JSPropertyDescriptor(jsobj, false));
+    }
+}
+
+inline JSFunction::operator JSNICallback() const {
+    if (*this) {
+        auto jsni = getProperty("_jsni");
+        if (jsni.is(Object))
+            return JSNativeObject<CallbackType>(jsni).native();
+    }
+    return nullptr;
 }
 
 inline void JSFunction::setName(const std::string& name) {
-    defineProperty("name", JSPropertyData(JSString(name), false, true));
+    if (!*this)  return;
+    auto desc = JSPropertyDescriptor(name, false, true);
+    defineProperty("name", desc);
 }
 
+inline JSFunction JSFunction::from(JSValue jsval) {
+    if (jsval.is(Function))  return jsval.as(Function);
+    return JSFunction();
+}
 
 template <JSFunctionType function>
-void JSNativeFunction<function>::thunk(JSNIEnv* env, const CallbackInfo info) {
-    assert(env == env_);
-    JSObject self = env->GetThis(info);
-    JsValue result = (*function)(self, info);
-    env->SetReturnValue(info, result);
+void JSNativeFunction<function>::thunk(JSNIEnv* env, const JSNICallbackInfo info) {
+    assert(env == JSValue::env);
+    JSObject self = JSNIGetThisOfCallback(env, info);
+    JSValue result = (*function)(self, info);
+    JSNISetReturnValue(env, info, result);
 }
 
 template <class T, JSMethodType<T> method>
-void JSNativeMethod<T, method>::thunk(JSNIEnv* env, const CallbackInfo info) {
-    assert(env == env_);
-    JSNativeObject<T> self(env->GetThis(info));
+void JSNativeMethod<T, method>::thunk(JSNIEnv* env, const JSNICallbackInfo info) {
+    assert(env == JSValue::env);
+    JSNativeObject<T> self(JSNIGetThisOfCallback(env, info));
     T* native = self.native();
     if (native) {
-        JsValue result = (native->*method)(self, info);
-        env->SetReturnValue(info, result);
+        JSValue result = (native->*method)(self, info);
+        JSNISetReturnValue(env, info, result);
     } else {
         //TODO: throw an exception
     }
 }
 
 template <class T, JSGetterType<T> getter>
-void JSNativeGetter<T, getter>::thunk(JSNIEnv* env, const CallbackInfo info) {
-    assert(env == env_);
-    JSNativeObject<T> self(env->GetThis(info));
+void JSNativeGetter<T, getter>::thunk(JSNIEnv* env, const JSNICallbackInfo info) {
+    assert(env == JSValue::env);
+    JSNativeObject<T> self(JSNIGetThisOfCallback(env, info));
     T* native = self.native();
     if (native) {
-        env->SetReturnValue(info, (native->*getter)(self));
+        JSValue result = (native->*getter)(self);
+        JSNISetReturnValue(env, info, result);
     } else {
         //TODO: throw an exception
     }
 }
 
 template <class T, JSSetterType<T> setter>
-void JSNativeSetter<T, setter>::thunk(JSNIEnv* env, const CallbackInfo info) {
-    assert(env == env_);
-    JSNativeObject<T> self(env->GetThis(info));
+void JSNativeSetter<T, setter>::thunk(JSNIEnv* env, const JSNICallbackInfo info) {
+    assert(env == JSValue::env);
+    JSNativeObject<T> self(JSNIGetThisOfCallback(env, info));
     T* native = self.native();
     if (native) {
-        (native->*setter)(self, env->GetArg(info, 0));
+        (native->*setter)(self, JSNIGetArgOfCallback(env, info, 0));
     } else {
         //TODO: throw an exception
+    }
+}
+
+template <class T, JSAccessorType<T> accessor>
+void JSNativeAccessor<T, accessor>::thunk(JSNIEnv* env,
+                                          const JSNICallbackInfo info) {
+    assert(env == JSValue::env);
+    JSNativeObject<T> self(JSNIGetThisOfCallback(env, info));
+    T* native = self.native();
+    if (!native) {
+        return;  //TODO: throw an exception
+    }
+
+    int argc = JSNIGetArgsLengthOfCallback(env, info);
+    if (argc == 0) {
+        JSValue result = (native->*accessor)(self, JSValue());
+        JSNISetReturnValue(env, info, result);
+    } else {
+        assert(argc == 1);
+        (native->*accessor)(self, JSNIGetArgOfCallback(env, info, 0));
     }
 }
 

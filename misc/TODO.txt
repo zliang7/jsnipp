@@ -1,15 +1,5 @@
-JSValue:
-
-* remove JSValue::from(JsValue&)
-* bool JSValue::operator==(const JSValue&)
-
-JSObject:
-
-* type checking for JSNativeObject
-
 JSFunction:
 
-* set function name
 ? template <class... Args>
   using JSNativeFunction = JSValue (*)(JSObject, Args...);
 ? template <std::size_t N>

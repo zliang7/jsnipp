@@ -25,32 +25,45 @@
  */
 #pragma once
 
-#include <cassert>
+#include <cerrno>
+#include <cmath>
 #include <string>
-
-#include <jsni.h>
 
 #include "jsvalue.h"
 
-namespace jsnipp {
+namespace jsni {
 
 class JSUndefined final : public JSValue {
 public:
-    JSUndefined(): JSValue(env_->NewUndefined()) {}
+    JSUndefined(JSValueRef jsval): JSValue(jsval) {
+        assert(check(*this));
+    }
 
-    JSUndefined(JsValue jsval): JSValue(jsval) {
-        assert(is_undefined());
+    JSUndefined(): JSValue(JSNINewUndefined(env)) {}
+
+    static bool check(JSValueRef jsval) {
+        return JSNIIsUndefined(env, jsval);
+    }
+    static JSUndefined from(JSValue) {
+        return JSUndefined();
     }
 };
 
 
 class JSNull final : public JSValue {
 public:
-    JSNull(std::nullptr_t null = nullptr):
-        JSValue(env_->NewNull()) {}
+    JSNull(JSValueRef jsval): JSValue(jsval) {
+        assert(check(*this));
+    }
 
-    JSNull(JsValue jsval): JSValue(jsval) {
-        assert(is_null());
+    JSNull(std::nullptr_t = nullptr):
+        JSValue(JSNINewNull(env)) {}
+
+    static bool check(JSValueRef jsval) {
+        return JSNIIsNull(env, jsval);
+    }
+    static JSNull from(JSValue) {
+        return JSNull();
     }
 };
 #define null_js JSNull()
@@ -58,20 +71,30 @@ public:
 
 class JSBoolean final : public JSValue {
 public:
+    JSBoolean(JSValueRef jsval): JSValue(jsval) {
+        assert(check(*this));
+    }
+
     JSBoolean(bool value = false):
-        JSValue(env_->NewBoolean(value)) {}
+        JSValue(JSNINewBoolean(env, value)) {}
 
-    JSBoolean(const JSValue& jsval):
-        JSValue(from(jsval).jsval_) {}
-    JSBoolean(JsValue jsval): JSValue(jsval) {
-        assert(is_boolean());
-    }
-
+    // conversion
     operator bool() const {
-        return env_->ToBool(jsval_);
+        return JSNIToCBool(env, jsval_);
     }
 
-    static JSBoolean from(const JSValue& jsval);
+    // comparision
+    bool operator ==(bool val) const {
+        return bool(*this) == val;
+    }
+    bool operator !=(bool val) const {
+        return bool(*this) != val;
+    }
+
+    static bool check(JSValueRef jsval) {
+        return JSNIIsBoolean(env, jsval);
+    }
+    static JSBoolean from(JSValue jsval);
 };
 // mimic the user-defined literal which doesn't support bool type
 #define true_js JSBoolean(true)
@@ -80,21 +103,197 @@ public:
 
 class JSNumber final : public JSValue {
 public:
-    JSNumber(double value = 0):
-        JSValue(env_->NewNumber(value)) {}
-
-    JSNumber(const JSValue& jsval):
-        JSValue(from(jsval).jsval_) {}
-    JSNumber(JsValue jsval): JSValue(jsval) {
-        assert(is_number());
+    JSNumber(JSValueRef jsval): JSValue(jsval) {
+        assert(check(*this));
     }
 
-    operator double() const  {
-        return env_->ToDouble(jsval_);
+    JSNumber(): JSValue(0) {}
+    template <typename T, typename = typename
+              std::enable_if<std::is_arithmetic<T>::value>::type>
+    JSNumber(T value):
+        JSValue(JSNINewNumber(env, static_cast<double>(value))) {}
+
+    // conversion
+    template <typename T, typename = typename
+              std::enable_if<std::is_arithmetic<T>::value>::type>
+    operator T() const {
+        return static_cast<T>(JSNIToCDouble(env, jsval_));
     }
 
-    static JSNumber from(const JSValue& jsval);
+    // assignment
+    JSNumber& operator =(double val) {
+        jsval_ = JSNINewNumber(env, val);
+        return *this;
+    }
+    JSNumber& operator +=(double val) {
+        return *this = (double)*this + val;
+    }
+    JSNumber& operator -=(double val) {
+        return *this = (double)*this - val;
+    }
+    JSNumber& operator *=(double val) {
+        return *this = (double)*this * val;
+    }
+    JSNumber& operator /=(double val) {
+        return *this = (double)*this / val;
+    }
+
+    // increment / decrement
+    JSNumber& operator ++() {
+        return *this += 1;
+    }
+    JSNumber operator ++(int) {
+        double val = *this;
+        *this += 1;
+        return val;
+    }
+    JSNumber& operator --() {
+        return *this -= 1;
+    }
+    JSNumber operator --(int) {
+        double val = *this;
+        *this -= 1;
+        return val;
+    }
+
+    bool isInteger() const {
+        double num = *this;
+        return modf(num, &num) == 0.0;
+    }
+    bool isNaN() const {
+        return isnan((double)*this);
+    }
+    bool isFinite() const {
+        return std::isfinite((double)*this);
+    }
+
+    static JSNumber parseInt(const std::string& string,
+                             unsigned int radix = 10) {
+        const char *b = string.c_str();
+        char* e;
+        double num = strtoll(b, &e, radix);
+        if (errno == ERANGE)
+            num = copysign(INFINITY, num);
+        return e > b ? num : NAN;
+    }
+    static JSNumber parseFloat(const std::string& string) {
+        double num = strtod(string.c_str(), NULL);
+        if (std::abs(num) == HUGE_VAL)
+            num = copysign(INFINITY, num);
+        return num;
+    }
+
+    static bool check(JSValueRef jsval) {
+        return JSNIIsNumber(env, jsval);
+    }
+    static JSNumber from(JSValue jsval);
 };
+
+// arithmetic
+template <typename T, typename = typename
+          std::enable_if<std::is_arithmetic<T>::value>::type>
+double operator +(const JSNumber& jsnum, T num) {
+    return (double)jsnum + (double)num;
+}
+template <typename T, typename = typename
+          std::enable_if<std::is_arithmetic<T>::value>::type>
+double operator +(T num, const JSNumber& jsnum) {
+    return (double)num + (double)jsnum;
+}
+template <typename T, typename = typename
+          std::enable_if<std::is_arithmetic<T>::value>::type>
+double operator -(const JSNumber& jsnum, T num) {
+    return (double)jsnum - (double)num;
+}
+template <typename T, typename = typename
+          std::enable_if<std::is_arithmetic<T>::value>::type>
+double operator -(T num, const JSNumber& jsnum) {
+    return (double)num - (double)jsnum;
+}
+template <typename T, typename = typename
+          std::enable_if<std::is_arithmetic<T>::value>::type>
+double operator *(const JSNumber& jsnum, T num) {
+    return (double)jsnum * (double)num;
+}
+template <typename T, typename = typename
+          std::enable_if<std::is_arithmetic<T>::value>::type>
+double operator *(T num, const JSNumber& jsnum) {
+    return (double)num * (double)jsnum;
+}
+template <typename T, typename = typename
+          std::enable_if<std::is_arithmetic<T>::value>::type>
+double operator /(const JSNumber& jsnum, T num) {
+    return (double)jsnum / (double)num;
+}
+template <typename T, typename = typename
+          std::enable_if<std::is_arithmetic<T>::value>::type>
+double operator /(T num, const JSNumber& jsnum) {
+    return (double)num / (double)jsnum;
+}
+
+// comparision
+template <typename T, typename = typename
+          std::enable_if<std::is_arithmetic<T>::value>::type>
+bool operator ==(const JSNumber& jsnum, T num) {
+    return (double)jsnum == (double)num;
+}
+template <typename T, typename = typename
+          std::enable_if<std::is_arithmetic<T>::value>::type>
+bool operator ==(T num, const JSNumber& jsnum) {
+    return (double)num == (double)jsnum;
+}
+template <typename T, typename = typename
+          std::enable_if<std::is_arithmetic<T>::value>::type>
+bool operator !=(const JSNumber& jsnum, T num) {
+    return (double)jsnum != (double)num;
+}
+template <typename T, typename = typename
+          std::enable_if<std::is_arithmetic<T>::value>::type>
+bool operator !=(T num, const JSNumber& jsnum) {
+    return (double)num != (double)jsnum;
+}
+template <typename T, typename = typename
+          std::enable_if<std::is_arithmetic<T>::value>::type>
+bool operator <=(const JSNumber& jsnum, T num) {
+    return (double)jsnum <= (double)num;
+}
+template <typename T, typename = typename
+          std::enable_if<std::is_arithmetic<T>::value>::type>
+bool operator <=(T num, const JSNumber& jsnum) {
+    return (double)num <= (double)jsnum;
+}
+template <typename T, typename = typename
+          std::enable_if<std::is_arithmetic<T>::value>::type>
+bool operator >=(const JSNumber& jsnum, T num) {
+    return (double)jsnum >= (double)num;
+}
+template <typename T, typename = typename
+          std::enable_if<std::is_arithmetic<T>::value>::type>
+bool operator >=(T num, const JSNumber& jsnum) {
+    return (double)num >= (double)jsnum;
+}
+template <typename T, typename = typename
+          std::enable_if<std::is_arithmetic<T>::value>::type>
+bool operator <(const JSNumber& jsnum, T num) {
+    return (double)jsnum < (double)num;
+}
+template <typename T, typename = typename
+          std::enable_if<std::is_arithmetic<T>::value>::type>
+bool operator <(T num, const JSNumber& jsnum) {
+    return (double)num < (double)jsnum;
+}
+template <typename T, typename = typename
+          std::enable_if<std::is_arithmetic<T>::value>::type>
+bool operator >(const JSNumber& jsnum, T num) {
+    return (double)jsnum > (double)num;
+}
+template <typename T, typename = typename
+          std::enable_if<std::is_arithmetic<T>::value>::type>
+bool operator >(T num, const JSNumber& jsnum) {
+    return (double)num > (double)jsnum;
+}
+
+// literal
 inline JSNumber operator "" _js(long double num) {
     return JSNumber(num);
 }
@@ -105,36 +304,91 @@ inline JSNumber operator "" _js(unsigned long long num) {
 
 class JSString final : public JSValue {
 public:
-    JSString(const std::string& str = std::string()):
-        JSValue(env_->NewStringFromUtf8(str.c_str(), str.length())){}
-    JSString(const char* str): 
-        JSValue(env_->NewStringFromUtf8(str, -1)){}
-
-    JSString(const JSValue& jsval):
-        JSValue(from(jsval).jsval_){}
-    JSString(JsValue jsval): JSValue(jsval) {
-        assert(is_string());
+    JSString(JSValueRef jsval): JSValue(jsval) {
+        assert(check(*this));
     }
 
+    JSString(const std::string& str = std::string()):
+        JSValue(JSNINewStringFromUtf8(env, str.c_str(), str.length())){}
+    JSString(const char* str, size_t len = -1):
+        JSValue(JSNINewStringFromUtf8(env, str, len)){}
+
+    // conversion
     operator std::string() const {
-        if (length() == 0)  return std::string();
-        char *buf = env_->GetStringUtf8Chars(jsval_);
-        std::string str(buf, length());
-        env_->ReleaseStringUtf8Chars(jsval_, buf);
+        size_t len = length();
+        std::string str(len, '\0');
+        if (len > 0) {
+            char* buf = const_cast<char*>(str.data());
+            JSNIGetStringUtf8Chars(env, jsval_, buf, len);
+        }
         return str;
     }
 
-    size_t length() const {
-        return env_->GetStringUtf8Length(jsval_);
+    // assignment
+    JSString& operator +=(const std::string& str) {
+        jsval_ = JSString(std::string(*this) + str);
+        return *this;
     }
 
-    static JSString from(const JSValue& jsval);
+    size_t length() const {
+        return JSNIGetStringUtf8Length(env, jsval_);
+    }
+
+    static bool check(JSValueRef jsval) {
+        return JSNIIsString(env, jsval);
+    }
+    static JSString from(JSValue jsval);
 };
+
+// concatenation
+inline std::string operator +(const JSString& jsstr, const std::string& str) {
+    return (std::string)jsstr + str;
+}
+inline std::string operator +(const std::string& str, const JSString& jsstr) {
+    return str + (std::string)jsstr;
+}
+
+// comparision
+inline bool operator ==(const JSString& jsstr, const std::string& str) {
+    return jsstr.length() == str.length() && std::string(jsstr) == str;
+}
+inline bool operator ==(const std::string& str, const JSString& jsstr) {
+    return jsstr == str;
+}
+inline bool operator !=(const JSString& jsstr, const std::string& str) {
+    return !(jsstr == str);
+}
+inline bool operator !=(const std::string& str, const JSString& jsstr) {
+    return jsstr != str;
+}
+
+// literal
 inline JSString operator "" _js(const char * str) {
     return JSString(str);
 }
 inline JSString operator "" _js(const char * str, std::size_t size) {
     return JSString(str);
 }
+
+
+class JSSymbol final : public JSValue {
+public:
+    JSSymbol(JSValueRef jsval): JSValue(jsval) {
+        assert(check(*this));
+    }
+
+    JSSymbol(const std::string& str = std::string()):
+        JSValue(JSNINewSymbol(env, JSString(str))) {};
+    JSSymbol(const char* str, size_t len = -1):
+        JSValue(JSNINewSymbol(env, JSString(str, len))) {};
+
+    static bool check(JSValueRef jsval) {
+        return JSNIIsSymbol(env, jsval);
+    }
+    static JSSymbol from(JSValue jsval) {
+        if (jsval.is(Symbol))  return jsval.as(Symbol);
+        return JSNINewSymbol(env, jsval);
+    }
+};
 
 }
