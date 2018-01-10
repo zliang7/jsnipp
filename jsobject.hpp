@@ -77,12 +77,11 @@ inline bool JSObject::defineProperty(const std::string& name,
     return true;
 }
 
-inline JSObject JSObject::from(JSValue jsval) {
-    if (jsval.is(Object))  return jsval.as(Object);
-
-    if (jsval.is(Null) || jsval.is(Undefined))
-        return JSObject();
-    return constructor().as(Function)(jsval).as(Object);
+inline JSObject::JSObject(JSValueRef jsval): JSValue(jsval) {
+    if (is(Null) || is(Undefined))
+        jsval_ = JSObject();
+    else if (!is(Object))
+        jsval_ = constructor().as(Function)(jsval);
 }
 
 }

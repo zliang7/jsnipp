@@ -40,8 +40,10 @@ class JSFunction;
 
 class JSObject : public JSValue {
 public:
-    JSObject(JSValueRef jsval): JSValue(jsval) {
-        assert(check(*this));
+    JSObject(JSValueRef jsval);
+    explicit JSObject(JSValueRef jsval, JSObject defval):
+        JSValue(jsval) {
+        if (!check(jsval_))  jsval_ = defval;
     }
 
     JSObject(): JSValue(JSNINewObject(env)) {}
@@ -67,7 +69,7 @@ public:
     }
 
     JSObject prototype() const {
-        return JSObject(JSNIGetPrototype(env, jsval_), true);
+        return JSObject(NoCheck(JSNIGetPrototype(env, jsval_)));
     }
     void setPrototype(JSObject proto) {
         callMethod("setPrototypeOf", proto);
@@ -141,10 +143,14 @@ public:
     static bool check(JSValueRef jsval) {
         return JSNIIsObject(env, jsval);
     }
-    static JSObject from(JSValue jsval);
 
 protected:
-    constexpr JSObject(JSValueRef jsval, bool): JSValue(jsval) {}
+    struct NoCheck {
+        constexpr explicit NoCheck(JSValueRef jsval): val_(jsval){}
+        constexpr operator JSValueRef() const { return val_; }
+        JSValueRef val_;
+    };
+    constexpr JSObject(NoCheck jsval): JSValue(jsval) {}
     explicit JSObject(int cnt):
         JSValue(JSNINewObjectWithInternalField(env, cnt)) {}
 

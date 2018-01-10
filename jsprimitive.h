@@ -36,7 +36,7 @@ namespace jsni {
 class JSUndefined final : public JSValue {
 public:
     JSUndefined(JSValueRef jsval): JSValue(jsval) {
-        assert(check(*this));
+        if (!check(jsval_))  jsval_ = JSUndefined();
     }
 
     JSUndefined(): JSValue(JSNINewUndefined(env)) {}
@@ -44,16 +44,13 @@ public:
     static bool check(JSValueRef jsval) {
         return JSNIIsUndefined(env, jsval);
     }
-    static JSUndefined from(JSValue) {
-        return JSUndefined();
-    }
 };
 
 
 class JSNull final : public JSValue {
 public:
     JSNull(JSValueRef jsval): JSValue(jsval) {
-        assert(check(*this));
+        if (!check(jsval_))  jsval_ = JSNull();
     }
 
     JSNull(std::nullptr_t = nullptr):
@@ -62,17 +59,16 @@ public:
     static bool check(JSValueRef jsval) {
         return JSNIIsNull(env, jsval);
     }
-    static JSNull from(JSValue) {
-        return JSNull();
-    }
 };
 #define null_js JSNull()
 
 
 class JSBoolean final : public JSValue {
 public:
-    JSBoolean(JSValueRef jsval): JSValue(jsval) {
-        assert(check(*this));
+    JSBoolean(JSValueRef jsval);
+    explicit JSBoolean(JSValueRef jsval, JSBoolean defval):
+        JSValue(jsval) {
+        if (!check(jsval_))  jsval_ = defval;
     }
 
     JSBoolean(bool value = false):
@@ -94,7 +90,6 @@ public:
     static bool check(JSValueRef jsval) {
         return JSNIIsBoolean(env, jsval);
     }
-    static JSBoolean from(JSValue jsval);
 };
 // mimic the user-defined literal which doesn't support bool type
 #define true_js JSBoolean(true)
@@ -103,8 +98,10 @@ public:
 
 class JSNumber final : public JSValue {
 public:
-    JSNumber(JSValueRef jsval): JSValue(jsval) {
-        assert(check(*this));
+    JSNumber(JSValueRef jsval);
+    explicit JSNumber(JSValueRef jsval, JSNumber defval):
+        JSValue(jsval) {
+        if (!check(jsval_))  jsval_ = defval;
     }
 
     JSNumber(): JSValue(0) {}
@@ -186,7 +183,6 @@ public:
     static bool check(JSValueRef jsval) {
         return JSNIIsNumber(env, jsval);
     }
-    static JSNumber from(JSValue jsval);
 };
 
 // arithmetic
@@ -304,8 +300,10 @@ inline JSNumber operator "" _js(unsigned long long num) {
 
 class JSString final : public JSValue {
 public:
-    JSString(JSValueRef jsval): JSValue(jsval) {
-        assert(check(*this));
+    JSString(JSValueRef jsval);
+    explicit JSString(JSValueRef jsval, JSString defval):
+        JSValue(jsval) {
+        if (!check(jsval_))  jsval_ = defval;
     }
 
     JSString(const std::string& str = std::string()):
@@ -337,7 +335,6 @@ public:
     static bool check(JSValueRef jsval) {
         return JSNIIsString(env, jsval);
     }
-    static JSString from(JSValue jsval);
 };
 
 // concatenation
@@ -374,7 +371,11 @@ inline JSString operator "" _js(const char * str, std::size_t size) {
 class JSSymbol final : public JSValue {
 public:
     JSSymbol(JSValueRef jsval): JSValue(jsval) {
-        assert(check(*this));
+        if (!check(jsval_))  jsval_ = JSNINewSymbol(env, jsval);
+    }
+    explicit JSSymbol(JSValueRef jsval, JSSymbol defval):
+        JSValue(jsval) {
+        if (!check(jsval_))  jsval_ = defval;
     }
 
     JSSymbol(const std::string& str = std::string()):
@@ -384,10 +385,6 @@ public:
 
     static bool check(JSValueRef jsval) {
         return JSNIIsSymbol(env, jsval);
-    }
-    static JSSymbol from(JSValue jsval) {
-        if (jsval.is(Symbol))  return jsval.as(Symbol);
-        return JSNINewSymbol(env, jsval);
     }
 };
 

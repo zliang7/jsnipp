@@ -38,13 +38,17 @@ public:
     static_assert(std::is_arithmetic<T>::value || std::is_void<T>::value, "");
     static_assert(std::is_same<T, uint8_t>::value || !clamped, "");
 
-    JSTypedArray(JSValueRef jsval): JSObject(jsval, true) {
-        assert(check(*this));
+    JSTypedArray(JSValueRef jsval): JSObject(NoCheck(jsval)) {
+        if (!check(jsval_))  jsval_ = JSTypedArray();
+    }
+    explicit JSTypedArray(JSValueRef jsval, JSTypedArray defval):
+        JSObject(NoCheck(jsval)) {
+        if (!check(jsval_))  jsval_ = defval;
     }
 
     JSTypedArray(): JSTypedArray(nullptr, 0) {}
     JSTypedArray(T* data, size_t length):  // TODO: support deleter
-        JSObject(JSNINewTypedArray(env, type(), data, length), true) {}
+        JSObject(NoCheck(JSNINewTypedArray(env, type(), data, length))) {}
 
     size_t length() const {
         return JSNIGetTypedArrayLength(env, jsval_);

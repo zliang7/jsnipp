@@ -30,6 +30,7 @@ int main() {
 
     // boolean
     JSBoolean b;
+    JSBoolean b1(jsval, true);
     b = true;
     (void)(b == true);
     (void)(b != true);
@@ -39,7 +40,7 @@ int main() {
 
     // number
     JSNumber num;
-    JSNumber num1;
+    JSNumber num1(jsval, 2.3);
     num = 100.0;
     num = 100;
     num += 100;
@@ -58,6 +59,7 @@ int main() {
 
     // string
     JSString str;
+    JSString str1(jsval, "hello");
     str = "asdf";
     (void)(str == "asdf");
     (void)("asdf" == str);
@@ -95,6 +97,8 @@ int main() {
           1, "2", 3.0, false, "str", nullptr
         }
     );
+    auto obj3 = JSObject(jsval, {"b", true});
+    auto obj4 = JSObject(jsval, {});
     auto obj5 = JSObject(std::map<std::string, int>());
     (void)obj1["a"];
     obj1["a"] = 100.0;
@@ -125,6 +129,7 @@ int main() {
 
     // function
     auto jsfun = JSFunction(tarr);  // FIXME
+    auto jsfun1 = JSFunction(jsval, nullptr);
     jsfun(nullptr, 1, 2.3, "asf", true);
 
     return 0;

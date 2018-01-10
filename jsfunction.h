@@ -34,13 +34,17 @@ namespace jsni {
 
 class JSFunction : public JSObject {
 public:
-    JSFunction(JSValueRef jsval): JSObject(jsval, true) {
-        assert(check(*this));
+    JSFunction(JSValueRef jsval): JSObject(NoCheck(jsval)) {
+        if (!check(jsval_))  jsval_ = nullptr;
+    }
+    explicit JSFunction(JSValueRef jsval, JSFunction defval):
+        JSObject(NoCheck(jsval)) {
+        if (!check(jsval_))  jsval_ = defval;
     }
 
     // create empty function
     constexpr JSFunction(std::nullptr_t = nullptr):
-        JSObject(nullptr, true) {}
+        JSObject(NoCheck(nullptr)) {}
     JSFunction(const std::string& arguments, const std::string& body);
 
     std::string name() const {
@@ -61,7 +65,6 @@ public:
     static bool check(JSValueRef jsval) {
         return JSNIIsFunction(env, jsval);
     }
-    static JSFunction from(JSValue jsval);
 
 protected:
     typedef std::remove_pointer<JSNICallback>::type CallbackType;
@@ -155,7 +158,8 @@ namespace jsni {
 
 inline JSFunction::JSFunction(const std::string& arguments,
                               const std::string& body):
-    JSObject(constructor()["constructor"].as(Function)(arguments, body), true) {
+    JSObject(NoCheck(
+             constructor()["constructor"].as(Function)(arguments, body))) {
     if (!is(Function))  jsval_ = nullptr;
 }
 
@@ -198,11 +202,6 @@ inline void JSFunction::setName(const std::string& name) {
     if (!*this)  return;
     auto desc = JSPropertyDescriptor(name, false, true);
     defineProperty("name", desc);
-}
-
-inline JSFunction JSFunction::from(JSValue jsval) {
-    if (jsval.is(Function))  return jsval.as(Function);
-    return JSFunction();
 }
 
 template <JSFunctionType function>

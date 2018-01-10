@@ -85,7 +85,7 @@ public:
     }
     template <typename T>
     constexpr T to(JSTypeID<T> = JSTypeID<T>()) const {
-        return T::from(*this);
+        return T(*this);
     }
 
     static bool check(JSValueRef jsval) {
@@ -100,8 +100,10 @@ JSNIEnv* JSValue::env = nullptr;
 
 class JSObject : public JSValue {
 public:
-    JSObject(JSValueRef jsval): JSValue(jsval) {
-        assert(check(*this));
+    JSObject(JSValueRef jsval): JSValue(jsval) {}
+    explicit JSObject(JSValueRef jsval, JSObject defval):
+        JSValue(jsval) {
+        if (!check(jsval_))  jsval_ = defval;
     }
 
     JSObject(): JSValue(JSNINewObject(env)) {}
@@ -135,17 +137,26 @@ public:
     }
 
 protected:
-    constexpr JSObject(JSValueRef jsval, bool): JSValue(jsval) {}
+    struct NoCheck {
+        constexpr explicit NoCheck(JSValueRef jsval): val_(jsval){}
+        constexpr operator JSValueRef() const { return val_; }
+        JSValueRef val_;
+    };
+    constexpr JSObject(NoCheck jsval): JSValue(jsval) {}
 };
 
 class JSArray final : public JSObject {
 public:
-    JSArray(JSValueRef jsval): JSObject(jsval, true) {
-        assert(check(*this));
+    JSArray(JSValueRef jsval): JSObject(NoCheck(jsval)) {
+        if (!check(jsval_))  jsval_ = JSArray(1, jsval);
+    }
+    explicit JSArray(JSValueRef jsval, JSArray defval):
+        JSObject(NoCheck(jsval)) {
+        if (!check(jsval_))  jsval_ = defval;
     }
 
     explicit JSArray(size_t length = 0):
-        JSObject(JSNINewArray(env, length), true) {}
+        JSObject(NoCheck(JSNINewArray(env, length))) {}
     typedef std::initializer_list<JSValue> initializer_list;
     JSArray(initializer_list list): JSArray(list.size()) {
         for (auto p = list.begin(); p < list.end(); ++p)
@@ -190,7 +201,7 @@ private:
 class JSUndefined final : public JSValue {
 public:
     JSUndefined(JSValueRef jsval): JSValue(jsval) {
-        assert(check(*this));
+        if (!check(jsval_))  jsval_ = JSUndefined();
     }
 
     JSUndefined(): JSValue(JSNINewUndefined(env)) {}
@@ -198,14 +209,11 @@ public:
     static bool check(JSValueRef jsval) {
         return JSNIIsUndefined(env, jsval);
     }
-    static JSUndefined from(JSValue) {
-        return JSUndefined();
-    }
 };
 class JSNull final : public JSValue {
 public:
     JSNull(JSValueRef jsval): JSValue(jsval) {
-        assert(check(*this));
+        if (!check(jsval_))  jsval_ = JSNull();
     }
 
     JSNull(std::nullptr_t = nullptr):
@@ -213,9 +221,6 @@ public:
 
     static bool check(JSValueRef jsval) {
         return JSNIIsNull(env, jsval);
-    }
-    static JSNull from(JSValue) {
-        return JSNull();
     }
 };
 

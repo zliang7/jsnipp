@@ -50,29 +50,29 @@ namespace jsni {
 3. len ? (len == 1 ? parse(arr[0]) : NaN) : 0
 */
 
-inline JSBoolean JSBoolean::from(JSValue jsval) {
-    if (jsval.is(Boolean))  return jsval.as(Boolean);
+inline JSBoolean::JSBoolean(JSValueRef jsval): JSValue(jsval) {
+    if (check(jsval)) return;
 
     bool val = false;
-    if (jsval.is(Number)) {
-        double d = jsval.as(Number);
+    if (is(Number)) {
+        double d = as(Number);
         val = d != 0.0 && !isnan(d);
-    } else if (jsval.is(String)) {
-        val = jsval.as(String).length() > 0;
+    } else if (is(String)) {
+        val = as(String).length() > 0;
     } else {
-        val = !jsval.is(Null) && !jsval.is(Undefined);
+        val = !is(Null) && !is(Undefined);
     }
-    return JSBoolean(val);
+    jsval_ = JSBoolean(val);
 }
 
-inline JSNumber JSNumber::from(JSValue jsval) {
-    if (jsval.is(Number))  return jsval.as(Number);
+inline JSNumber::JSNumber(JSValueRef jsval): JSValue(jsval) {
+    if (check(jsval)) return;
 
     double num = 0.0;
-    if (jsval.is(Boolean)) {
-        num = jsval.as(Boolean) ? 1.0 : 0.0;
-    } else if (jsval.is(String)) {
-        std::string str = jsval.as(String);
+    if (is(Boolean)) {
+        num = as(Boolean) ? 1.0 : 0.0;
+    } else if (is(String)) {
+        std::string str = as(String);
         if (str.length() > 0) {
             char* end;
             num = strtod(str.c_str(), &end);
@@ -81,34 +81,37 @@ inline JSNumber JSNumber::from(JSValue jsval) {
             else if (std::abs(num) == HUGE_VAL)
                 num = copysign(INFINITY, num);
         }
-    } else if (jsval.is(Array)) {
-        auto array = jsval.as(Array);
-        if (array.length() == 1)
-            return from(array[0]);
+    } else if (is(Array)) {
+        auto array = as(Array);
+        if (array.length() == 1) {
+            jsval_ = JSNumber(array[0]);
+            return;
+        }
         if (array.length() > 0)
             num = NAN;
-    } else if (!jsval.is(Null)) {
+    } else if (!is(Null)) {
         num = NAN;
     }
-    return JSNumber(num);
+    jsval_ = JSNumber(num);
 }
 
-inline JSString JSString::from(JSValue jsval) {
-    if (jsval.is(String))  return jsval.as(String);
+inline JSString::JSString(JSValueRef jsval): JSValue(jsval) {
+    if (check(jsval)) return;
 
     std::string str;
-    if (jsval.is(Null)) {
+    if (is(Null)) {
         str = "null";
-    } else if (jsval.is(Undefined)) {
+    } else if (is(Undefined)) {
         str = "undefined";
-    } else if (jsval.is(Boolean)) {
-        str = jsval.as(Boolean) ? "true" : "false";
-    } else if (jsval.is(Number)) {
-        str = std::to_string((double)jsval.as(Number));
+    } else if (is(Boolean)) {
+        str = as(Boolean) ? "true" : "false";
+    } else if (is(Number)) {
+        str = std::to_string((double)as(Number));
     } else {
-        return jsval.to(Object).callMethod("toString").as(String);
+        jsval_ = to(Object).callMethod("toString");
+        return;
     }
-    return JSString(str);
+    jsval_ = JSString(str);
 }
 
 }

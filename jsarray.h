@@ -31,12 +31,16 @@ namespace jsni {
 
 class JSArray final : public JSObject {
 public:
-    JSArray(JSValueRef jsval): JSObject(jsval, true) {
-        assert(check(*this));
+    JSArray(JSValueRef jsval): JSObject(NoCheck(jsval)) {
+        if (!check(jsval_))  jsval_ = JSArray(1, jsval);
+    }
+    explicit JSArray(JSValueRef jsval, JSArray defval):
+        JSObject(NoCheck(jsval)) {
+        if (!check(jsval_))  jsval_ = defval;
     }
 
     explicit JSArray(size_t length = 0):
-        JSObject(JSNINewArray(env, length), true) {}
+        JSObject(NoCheck(JSNINewArray(env, length))) {}
     typedef std::initializer_list<JSValue> initializer_list;
     JSArray(initializer_list list): JSArray(list.size()) {
         for (auto p = list.begin(); p < list.end(); ++p)
@@ -111,7 +115,6 @@ public:
     static bool check(JSValueRef jsval) {
         return JSNIIsArray(env, jsval);
     }
-    static JSArray from(JSValue jsval);
 
 private:
     void reduce_args(size_t length) {}
@@ -140,12 +143,4 @@ struct TupleHelper<Tuple, 1> {
 };
 }
 #endif
-
-inline JSArray JSArray::from(JSValue jsval) {
-    if (jsval.is(Array))  return jsval.as(Array);
-/*  if (jsval.is(Number))
-        return JSArray((size_t)JSNumber(jsval));*/
-    return JSArray(1, jsval);
-}
-
 }

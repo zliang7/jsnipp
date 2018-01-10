@@ -154,7 +154,7 @@ public:
     }
     template <typename T>
     constexpr T to(JSTypeID<T> = JSTypeID<T>()) const {
-        return T::from(*this);
+        return T(*this);
     }
 
     static bool check(JSValueRef jsval) {
