@@ -104,9 +104,18 @@ int main() {
     obj1["a"] = 100.0;
     obj1["a"] = obj1["b"];
 
+    // AssociatedObject
+    auto jsaobj = JSAssociatedObject(10);
+    auto jsaobj1 = JSAssociatedObject(10, "a", true, 11, 3.3);
+    jsaobj.set(0, "asdf");
+    jsaobj.get<const char*>(0);
+    jsaobj.set(2, 100);
+    jsaobj.get<double>(3);
+
     // NativeObject
     struct _ST {};
     auto nobj = JSNativeObject<_ST>();
+    auto nobj1 = JSNativeObject<const char>("asdf");
 
     // Array
     auto arr = JSArray{ "1", 2, nullptr };

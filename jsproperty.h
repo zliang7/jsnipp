@@ -52,16 +52,7 @@ public:
         set_enumerable(enumerable);
         set_data(value, writable);
     }
-    template <class T, JSGetterType<T> get>
-    JSPropertyDescriptor(JSNativeGetter<T, get> getter,
-                         bool enumerable = true, bool configurable = false) {
-        set_configurable(configurable);
-        set_enumerable(enumerable);
-        set_accessor(getter);
-    }
-    template <class T, JSGetterType<T> get, JSSetterType<T> set>
-    JSPropertyDescriptor(JSNativeGetter<T, get> getter,
-                         JSNativeSetter<T, set> setter,
+    JSPropertyDescriptor(JSFunction getter, JSFunction setter = nullptr,
                          bool enumerable = true, bool configurable = false) {
         set_configurable(configurable);
         set_enumerable(enumerable);

@@ -93,8 +93,8 @@ private:
 };
 
 
-template <class T>
-using JSMethodType = JSValue (T::*)(JSObject, JSArray);
+//template <class T>
+//using JSMethodType = JSValue (T::*)(JSObject, JSArray);
 
 template <class T, JSMethodType<T> method>
 class JSNativeMethod : public JSFunction {
@@ -107,11 +107,12 @@ public:
 
 private:
     static void thunk(JSNIEnv* env, const JSNICallbackInfo info);
+    friend class JSNativeObject<T>;
 };
 
 
-template <class T>
-using JSGetterType = JSValue (T::*)(JSObject);
+//template <class T>
+//using JSGetterType = JSValue (T::*)(JSObject);
 
 template <class T, JSGetterType<T> getter>
 class JSNativeGetter : public JSFunction {
@@ -120,10 +121,11 @@ public:
 
 private:
     static void thunk(JSNIEnv* env, const JSNICallbackInfo info);
+    friend class JSNativeObject<T>;
 };
 
-template <class T>
-using JSSetterType = void (T::*)(JSObject, JSValue);
+//template <class T>
+//using JSSetterType = void (T::*)(JSObject, JSValue);
 
 template <class T, JSSetterType<T> setter>
 class JSNativeSetter : public JSFunction {
@@ -132,10 +134,11 @@ public:
 
 private:
     static void thunk(JSNIEnv* env, const JSNICallbackInfo info);
+    friend class JSNativeObject<T>;
 };
 
-template <class T>
-using JSAccessorType = JSValue (T::*)(JSObject, JSValue);
+//template <class T>
+//using JSAccessorType = JSValue (T::*)(JSObject, JSValue);
 
 template <class T, JSAccessorType<T> accessor>
 class JSNativeAccessor : public JSFunction {
@@ -144,6 +147,7 @@ public:
 
 private:
     static void thunk(JSNIEnv* env, const JSNICallbackInfo info);
+    friend class JSNativeObject<T>;
 };
 
 // FYI: http://stackoverflow.com/questions/15148749/pointer-to-class-member-as-a-template-parameter

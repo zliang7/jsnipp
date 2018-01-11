@@ -84,4 +84,52 @@ inline JSObject::JSObject(JSValueRef jsval): JSValue(jsval) {
         jsval_ = constructor().as(Function)(jsval);
 }
 
+
+template <class T> template <JSMethodType<T> method>
+bool JSNativeObject<T, typename std::enable_if<std::is_class<T>::value>::type>
+                   ::defineMethod(const std::string& name) {
+    const auto callback = JSNativeMethod<T, method>::thunk;
+    return JSNIRegisterMethod(env(), this->jsval_, name.c_str(), callback);
+}
+
+template <class T> template <JSGetterType<T> getter, JSSetterType<T> setter>
+bool JSNativeObject<T, typename std::enable_if<std::is_class<T>::value>::type>
+                   ::defineProperty(const std::string& name) {
+    JSNIAccessorPropertyDescriptor desc {
+        JSNativeGetter<T, getter>::thunk,
+        setter != nullptr ? JSNativeSetter<T, setter>::thunk : nullptr,
+        JSNINone, nullptr
+    };
+    return JSNIDefineProperty(env(), this->jsval_, name.c_str(),
+                              {nullptr, &desc});
+}
+
+template <class T> template <JSAccessorType<T> accessor>
+bool JSNativeObject<T, typename std::enable_if<std::is_class<T>::value>::type>
+                   ::defineProperty(const std::string& name) {
+    JSNIAccessorPropertyDescriptor desc {
+        JSNativeAccessor<T, accessor>::thunk,
+        JSNativeAccessor<T, accessor>::thunk,
+        JSNINone, nullptr
+    };
+    return JSNIDefineProperty(env(), this->jsval_, name.c_str(),
+                              {nullptr, &desc});
+}
+
+/*
+template <class T>
+bool JSNativeObjectBase<T>::defineProperty(const std::string& name,
+                                           JSValue& value) {
+    JSNIDataPropertyDescriptor desc {value, JSNIReadOnly};
+    return JSNIDefineProperty(env(), this->jsval_, name.c_str(),
+                              {&desc, nullptr});
+}
+template <class T>
+bool JSNativeObjectBase<T>::defineProperty(const std::string& name,
+                                           const JSValue& value) {
+    JSNIDataPropertyDescriptor desc {value, JSNINone};
+    return JSNIDefineProperty(env(), this->jsval_, name.c_str(),
+                              {&desc, nullptr});
+}*/
+
 }

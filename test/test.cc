@@ -38,12 +38,18 @@ public:
     void set_prefix(JSObject, JSValue val) {
         prefix_ = val.to(String);
     }
-    // initializer
+    /* initializer
     static void setup(JSObject cls) {
         cls.defineProperty("echo", JSNativeMethod<Echo, &Echo::echo>());
         cls.defineProperty("prefix", JSNativeGetter<Echo, &Echo::prefix>());
         cls.defineProperty("prefix2", {JSNativeGetter<Echo, &Echo::prefix>(),
                                        JSNativeSetter<Echo, &Echo::set_prefix>()});
+    }*/
+    static void setup(JSNativeObject<Echo>& proto) {
+        //cls.defineProperty("echo",  JSNativeMethod<Echo, &Echo::echo>());
+        proto.defineMethod<&Echo::echo>("echo");
+        proto.defineProperty<&Echo::prefix>("prefix");
+        proto.defineProperty<&Echo::prefix, &Echo::set_prefix>("prefix2");
     }
 private:
     std::string prefix_;
@@ -98,5 +104,18 @@ int JSNI_Init(JSNIEnv* env, JSValueRef exports) {
     ta.is(TypedArray);
     ta.is(Uint8ClampedArray);
     jsobj.setProperty("typed", ta);
+
+    auto ao = JSAssociatedObject(5);
+    (void)ao.get<char>(1);
+    (void)ao.get<char*>(2);
+    (void)ao.get<const char*>(3);
+    ao.set(1, 100);
+    char* p = nullptr;
+    ao.set(2, p);
+    ao.set(3, "asdf");
+    ao.set(3, JSNI_Init);
+    //JSBoolean aaa(ao); FIXME
+
+    //JSNativeObject<Echo>::set_compatible_types<int, bool, long>();
     return JSNI_VERSION_2_1;
 }
