@@ -116,6 +116,11 @@ int JSNI_Init(JSNIEnv* env, JSValueRef exports) {
     ao.set(3, JSNI_Init);
     //JSBoolean aaa(ao); FIXME
 
+    auto cb1 = JSCallback<void, int, int, int>();
+    cb1(1, 2, 3);
+    //JSCallback<void, bool> cb2(nullptr, nullptr);
+    //cb2(true);
+
     //JSNativeObject<Echo>::set_compatible_types<int, bool, long>();
     return JSNI_VERSION_2_1;
 }

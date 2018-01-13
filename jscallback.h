@@ -44,6 +44,10 @@ void AsyncThreadWork(JSNIEnv* env, void* data,
                      AsyncThreadWorkAfterCallback callback);
 }
 
+#if !defined(__cpp_generic_lambdas)
+#error "C++ generic lambdas support requires G++ 4.9 / clang 3.4 or later"
+#endif
+
 namespace jsni {
 
 class JSCallbackBase {
@@ -77,9 +81,10 @@ public:
     JSUnsafeCallback(JSFunction jsfunc):
         JSCallbackBase(jsfunc? JSGlobalValue(jsfunc): nullptr) {}
 
-    R operator()(Ts&... args) {
+    template <typename ...Us>
+    R operator()(Us&&... args) {
         assert(is_safe());
-        return call(std::forward_as_tuple(args...));
+        return call(std::forward<Us>(args)...);
     }
 
 protected:
@@ -87,12 +92,9 @@ protected:
         return JSValue();
     }
 
-    R call(const std::tuple<Ts...>& tuple) const {
-        auto jsnify = [this](Ts... args)->JSValue{
-            return this->jsnify(args...);
-        };
-        JSValue argv = apply(jsnify, tuple);
-
+    template <typename ...Us>
+    R call(Us&&... args) const {
+        JSValue argv = jsnify(std::forward<Us>(args)...);
         JSFunction jsfunc(jsfunc_);
         if (!argv.is(Valid))
             return static_cast<R>(jsfunc());
@@ -110,9 +112,9 @@ public:
     template<typename ...Us>
     R operator()(Us&&... args) {
         if (JSUnsafeCallback<R, Ts...>::is_safe())
-            return call(std::forward_as_tuple(args...));
+            return call(std::forward<Us>(args)...);
 
-        args_ = std::make_tuple(args...);
+        args_ = std::move(std::make_tuple(args...));
         AsyncThreadWork(NULL, this, [](JSNIEnv*, void*){}, callback);
         return result_.get_future().get();
     }
@@ -120,7 +122,10 @@ public:
 private:
     static void callback(JSNIEnv* env, void* data) {
         auto self = reinterpret_cast<JSCallback<R, Ts...>*>(data);
-        self->result_.set_value(self->call(self->args_));
+        auto call = [self](auto&&... args) -> JSValue {
+            return self->call(std::forward<decltype(args)>(args)...);
+        };
+        self->result_.set_value(jsni::apply(call, self->args_));
     }
     std::tuple<Ts...> args_;
     std::promise<R> result_;
@@ -149,7 +154,10 @@ public:
 private:
     static void callback(JSNIEnv* env, void* data) {
         auto self = reinterpret_cast<JSCallback<void, Ts...>*>(data);
-        self->call(self->args_);
+        auto call = [self](auto&&... args) {
+            self->call(std::forward<decltype(args)>(args)...);
+        };
+        jsni::apply(call, self->args_);
         delete self;
     }
     std::tuple<Ts...> args_;
