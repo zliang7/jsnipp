@@ -91,7 +91,7 @@ protected:
         auto jsnify = [this](Ts... args)->JSValue{
             return this->jsnify(args...);
         };
-        JSValue argv = std::apply(jsnify, tuple);
+        JSValue argv = apply(jsnify, tuple);
 
         JSFunction jsfunc(jsfunc_);
         if (!argv.is(Valid))
